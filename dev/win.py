@@ -1,0 +1,32 @@
+import asyncio
+from playwright.async_api import async_playwright
+errors=[]; bad=[]
+async def main():
+    async with async_playwright() as p:
+        b = await p.chromium.launch(executable_path="/usr/bin/google-chrome", args=["--no-sandbox"])
+        pg = await b.new_page(viewport={"width": 1180, "height": 760})
+        await pg.add_init_script("window.ELIXIR_KEY='k'; window.ELIXIR_WINDOWS=true;")
+        pg.on("pageerror", lambda e: errors.append(str(e)))
+        pg.on("response", lambda r: bad.append(r.url) if r.status >= 400 else None)
+        await pg.goto("http://127.0.0.1:7810/")
+        await pg.wait_for_selector("#splash", state="detached", timeout=12000)
+        await pg.evaluate("go('config')")
+        await pg.wait_for_timeout(700)
+        await pg.screenshot(path="/tmp/ex/shots/w1-settings.png")
+        await pg.evaluate("go('auto')")
+        await pg.click("#add-watched")
+        await pg.wait_for_selector("#picker.open")
+        await pg.fill("#picker-path", "/tmp/ex/root/volume1/data")
+        await pg.click("#picker-go")
+        await pg.wait_for_timeout(600)
+        print("crumb:", await pg.inner_text("#picker-crumb"), "| items:", await pg.locator("#picker-list .picker-item").count())
+        await pg.screenshot(path="/tmp/ex/shots/w2-picker.png")
+        await pg.click("#picker-cancel")
+        await pg.evaluate("window.elixirDrop(['/tmp/ex/root/volume1/Inbox'])")
+        await pg.wait_for_timeout(3000)
+        print("rename items after drop:", await pg.locator("#rename-list .item").count(), "page:", await pg.evaluate("page"))
+        await pg.screenshot(path="/tmp/ex/shots/w3-drop.png")
+        print("about:", await pg.inner_text("#about"))
+        await b.close()
+asyncio.run(main())
+print("errors:", errors, "bad:", bad)
