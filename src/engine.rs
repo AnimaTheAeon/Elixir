@@ -1071,10 +1071,11 @@ fn sidecars_of(video: &Path, new_dir: &Path, new_stem: &str) -> Vec<(String, Str
     // A Subs folder only when it clearly belongs to this one video.
     let videos_here = std::fs::read_dir(dir).into_iter().flatten().flatten().filter(|e| config::is_video(&e.path())).count();
     if videos_here == 1 {
-        for sub in ["Subs", "subs", "Subtitles", "subtitles"] {
-            let d = dir.join(sub);
-            if d.is_dir() {
-                look(&d, true);
+        // Each real folder once (Windows sees "Subs" and "subs" as the same folder).
+        for e in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            if (name == "subs" || name == "subtitles") && e.path().is_dir() {
+                look(&e.path(), true);
             }
         }
     }
