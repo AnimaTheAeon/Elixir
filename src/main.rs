@@ -19,6 +19,8 @@ mod engine;
 mod fsops;
 mod http;
 mod log;
+#[cfg(windows)]
+mod mc360_web;
 mod meta;
 mod naming;
 mod parse;

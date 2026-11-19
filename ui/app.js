@@ -320,6 +320,139 @@ for (const type of ["mousedown", "mouseup"]) {
 }
 addEventListener("resize", () => { if (isBlades()) bladesPlace(true); });
 
+// ---------- MC360 look ----------
+// The MC360 dashboard skin's blades, one per page, each with a menu of what
+// that page holds. Picking an entry opens the page on the blade (the same
+// page as in every other look) and jumps to that part of it. The drawing,
+// sounds and keys come from the shared engine in mc360/.
+
+let mc = null;          // the running engine, while the look is MC360
+let mcLoading = null;
+const MC_LOOKS = [["ff", "FFVII Menu"], ["green", "Xbox"], ["blades", "Blades"], ["glass", "Dark Glass"], ["mc360", "MC360"]];
+const MC_BLADES = [
+  { key: "queue", color: "green", items: [
+    { id: "queue", label: "Waiting files", icon: "queue", hint: "Files automatic renaming wasn't sure about.", page: "queue" },
+    { id: "queue-clear", label: "Clear finished", icon: "trash", hint: "Remove finished and skipped entries.", page: "queue", click: "#queue-clear" },
+  ] },
+  { key: "rename", color: "orange", items: [
+    { id: "rename", label: "Rename list", icon: "copy", hint: "Pick files, check the new names, rename.", page: "rename" },
+    { id: "choose", label: "Choose a folder or file…", icon: "folder", hint: "Add files to rename.", page: "rename", click: "#choose" },
+    { id: "rename-clear", label: "Clear list", icon: "trash", hint: "Start a fresh list.", page: "rename", click: "#rename-clear" },
+  ] },
+  { key: "automation", color: "blue", items: [
+    { id: "auto", label: "Overview", icon: "bolt", hint: "Automatic renaming and practice mode.", page: "auto" },
+    { id: "watched", label: "Watched folders", icon: "eye", hint: "Folders Elixir keeps an eye on.", page: "auto", section: "WATCHED FOLDERS" },
+    { id: "add-watched", label: "Add folder…", icon: "plus", hint: "Watch another folder.", page: "auto", click: "#add-watched" },
+    { id: "preflight", label: "Checks before turning it on", icon: "shield", hint: "Connections, hardlinks between your folders, and permissions.", page: "auto", section: "BEFORE YOU TURN IT ON" },
+    { id: "rules", label: "How it decides", icon: "rule", hint: "The rules automatic renaming follows.", page: "auto", section: "HOW IT DECIDES" },
+  ] },
+  { key: "history", color: "grey", items: [
+    { id: "history", label: "All renames", icon: "clock", hint: "Everything renamed or handed off. Undo works for 30 days.", page: "history" },
+  ] },
+  { key: "settings", color: "purple", items: [
+    { id: "suite", label: "The suite", icon: "plug", hint: "Lifestream, Midgar and Turks.", page: "config", section: "THE SUITE" },
+    { id: "databases", label: "Databases", icon: "net", hint: "TheMovieDB, TheTVDB and AniDB.", page: "config", section: "DATABASES" },
+    { id: "where", label: "Where files go", icon: "folder", hint: "Where Elixir files things.", page: "config", section: "WHERE ELIXIR FILES THINGS" },
+    { id: "names", label: "Names", icon: "tag", hint: "Naming style and formats.", page: "config", section: "NAMES" },
+    { id: "updates", label: "Updates", icon: "refresh", hint: "Check now and Update now.", page: "config", section: "UPDATES" },
+    { id: "look", label: "Look and sound", icon: "palette", hint: "Five looks; MC360's skin and sounds are in the guide (G).", page: "config", section: "LOOK" },
+    { id: "log", label: "Log", icon: "doc", hint: "Detailed log.", page: "log" },
+  ] },
+];
+const mcBladeOf = (id) => Math.max(0, MC_BLADES.findIndex((b) => b.items.some((it) => it.page === id)));
+let mcItem = null;      // the entry being opened from the menu
+
+function mcSection(label) {
+  return $$(".page.active .section > .label").find((l) => l.textContent.trim() === label);
+}
+
+function mcVersion() {
+  const tag = $('script[src^="app.js"]');
+  const v = tag ? new URL(tag.src, location.href).searchParams.get("v") || "" : "";
+  return v.startsWith("@") ? "" : v;
+}
+
+function mcLoad() {
+  if (window.MC360) return Promise.resolve();
+  if (mcLoading) return mcLoading;
+  const css = document.createElement("link");
+  css.rel = "stylesheet"; css.href = "mc360/mc360.css?v=" + mcVersion();
+  document.head.append(css);
+  mcLoading = new Promise((resolve, reject) => {
+    const js = document.createElement("script");
+    js.src = "mc360/mc360.js?v=" + mcVersion();
+    js.onload = resolve; js.onerror = () => { mcLoading = null; reject(new Error("load")); };
+    document.head.append(js);
+  });
+  return mcLoading;
+}
+
+async function mcOn() {
+  if (mc) return;
+  try { await mcLoad(); } catch (e) { $("#statusbar").textContent = "The MC360 look couldn't load its files."; return; }
+  if (mc || !config || config.theme !== "mc360") return;
+  mc = MC360.mount({
+    base: "mc360/",
+    app: { name: "Elixir", plat: WIN ? "Windows" : "NAS", ver: (status && status.version) || mcVersion(), icon: "gem" },
+    blades: MC_BLADES,
+    card: () => {
+      const s = status || {};
+      const lines = [$("#statusbar").textContent];
+      lines.push(`${Number(s.queue || 0).toLocaleString()} in queue`);
+      lines.push(`${Number(s.renamed_today || 0).toLocaleString()} renamed today`);
+      return lines;
+    },
+    host: () => $("#main"),
+    onOpen: (b, item) => { mcItem = item; go(item.page); },
+    beforeBack: () => { if (page === "log") { go("config"); return true; } return false; },
+    popupOpen: () => !!$(".modal.open, .overlay-msg.open"),
+    looks: MC_LOOKS.map(([, l]) => l),
+    setLook: (label) => {
+      const key = (MC_LOOKS.find(([, l]) => l === label) || ["ff"])[0];
+      if (key === config.theme) return;
+      config.theme = key;
+      applyTheme(key);
+      try { localStorage.setItem("elixir-theme", key); } catch (e) { /* ignore */ }
+      queueSave({ theme: key }, true);
+    },
+    checkUpdates: async () => {
+      await api("update/check", {});
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        await refreshStatus();
+        if (!$("#update-check").disabled) break;
+      }
+      return $("#update-state").textContent || "Checked for updates";
+    },
+  });
+  mc.host.classList.add("bbody");
+  // Start on the menu of the blade the current page belongs to; Enter opens the page.
+  mc.home(mcBladeOf(HIDDEN_PAGES[page] || page));
+}
+
+function mcOff() {
+  if (!mc) return;
+  mc.destroy();
+  mc = null;
+}
+
+/** After go(): show the page on its blade, and jump to the picked part of it. */
+function mcShow(id) {
+  if (!mc) return;
+  const it = mcItem && mcItem.page === id ? mcItem : null;
+  mcItem = null;
+  const blade = mcBladeOf(HIDDEN_PAGES[id] || id);
+  const first = MC_BLADES[blade].items.find((x) => x.page === id) || MC_BLADES[blade].items[0];
+  mc.showPage(blade, (it || first).id);
+  if (!it) { mc.host.scrollTop = 0; return; }
+  requestAnimationFrame(() => {
+    const scroller = $(".page.active .scroll") || mc.host;
+    if (it.section) { const l = mcSection(it.section); if (l) l.parentElement.scrollIntoView({ block: "start" }); }
+    else { scroller.scrollTop = 0; mc.host.scrollTop = 0; }
+    if (it.click) { const b = $(it.click); if (b && !b.disabled) b.click(); }
+  });
+}
+
 // ---------- Xbox look ----------
 
 let greenHome = true;     // on the orb's home screen
@@ -327,8 +460,8 @@ let greenCursor = 0;      // highlighted entry there
 const isGreen = () => document.body.classList.contains("green");
 
 function applyTheme(theme) {
-  const green = theme === "green", blades = theme === "blades", glass = theme === "glass";
-  const key = glass ? "glass" : blades ? "blades" : green ? "green" : "ff";
+  const green = theme === "green", blades = theme === "blades", glass = theme === "glass", mc360 = theme === "mc360";
+  const key = mc360 ? "mc360" : glass ? "glass" : blades ? "blades" : green ? "green" : "ff";
   $$("#theme-pick [data-theme]").forEach((b) => b.classList.toggle("picked", b.dataset.theme === key));
   if (document.body.dataset.themed === key) return;
   document.body.dataset.themed = key;
@@ -336,6 +469,14 @@ function applyTheme(theme) {
   document.body.classList.toggle("blades", blades);
   document.body.classList.toggle("glass", glass);
   requestAnimationFrame(glassPill);
+  if (mc360) {
+    greenHome = false;
+    document.body.classList.remove("g-at-home");
+    bladesOff();
+    mcOn();
+    return;
+  }
+  mcOff();
   if (blades) {
     greenHome = false;
     document.body.classList.remove("g-at-home");
@@ -450,6 +591,7 @@ function go(id) {
   if (!PAGES.some(([p]) => p === id) && !HIDDEN_PAGES[id]) id = "rename";
   page = id;
   if (isBlades()) bladesShow(id);
+  mcShow(id);
   const menuId = HIDDEN_PAGES[id] || id;
   $$(".menu-item").forEach((b) => b.classList.toggle("selected", b.dataset.go === menuId));
   glassPill();

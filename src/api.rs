@@ -119,6 +119,15 @@ fn windows_gate(req: Request) -> Option<Request> {
         }
         return Some(req);
     }
+    // The MC360 look's files (with byte ranges, so its swirl video loops).
+    let req = if path.starts_with("/mc360/") {
+        match crate::mc360_web::serve(req, &path) {
+            Ok(()) => return None,
+            Err(req) => req,
+        }
+    } else {
+        req
+    };
     match static_file(&path) {
         Some((bytes, kind)) => {
             let response = Response::from_data(bytes)

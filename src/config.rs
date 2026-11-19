@@ -27,7 +27,7 @@ pub const SECRETS: &[&str] = &["tmdb_key", "tvdb_key", "tvdb_pin", "lifestream_p
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(default)]
 pub struct Config {
-    /// Window look: "ff", "green" (Xbox), "blades" or "glass" (Dark Glass).
+    /// Window look: "ff", "green" (Xbox), "blades", "glass" (Dark Glass) or "mc360".
     pub theme: String,
     pub auto_update: bool,
 
@@ -108,7 +108,7 @@ impl Default for Config {
 
 impl Config {
     pub fn normalize(&mut self) {
-        if !["green", "blades", "glass"].contains(&self.theme.as_str()) {
+        if !["green", "blades", "glass", "mc360"].contains(&self.theme.as_str()) {
             self.theme = "ff".into();
         }
         for f in self.watched.iter_mut().chain(self.no_seed.iter_mut()).chain([&mut self.tv_folder, &mut self.anime_folder, &mut self.movies_folder]) {
@@ -297,6 +297,9 @@ mod tests {
         assert_eq!(c.watched, vec![if cfg!(windows) { "D:\\data\\torrents" } else { "/volume1/data/torrents" }]);
         assert_eq!(c.midgar_url, "http://192.168.1.127:8990");
         assert_eq!(c.theme, "ff");
+        let mut m = Config { theme: "mc360".into(), ..Config::default() };
+        m.normalize();
+        assert_eq!(m.theme, "mc360");
         assert_eq!(c.language, "en");
         assert!(!c.automatic);
         assert!(c.practice);

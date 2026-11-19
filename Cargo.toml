@@ -1,6 +1,6 @@
 [package]
 name = "elixir"
-version = "1.1.0"
+version = "1.2.0"
 edition = "2021"
 description = "Elixir: renames TV shows, movies and anime using TheMovieDB, TheTVDB and AniDB."
 license = "MIT"
