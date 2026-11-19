@@ -1,0 +1,21 @@
+{
+	"Elixir.js": {
+		"Elixir.AppInstance": {
+			"type": "app",
+			"title": "app:name",
+			"desc": "app:description",
+			"icon": "images/elixir_{0}.png",
+			"texts": "texts",
+			"allowMultiInstance": false,
+			"allUsers": false,
+			"appWindow": "Elixir.AppWindow",
+			"depend": ["Elixir.AppWindow"]
+		},
+		"Elixir.AppWindow": {
+			"type": "lib",
+			"title": "app:name",
+			"icon": "images/elixir_{0}.png",
+			"texts": "texts"
+		}
+	}
+}

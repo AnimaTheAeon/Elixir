@@ -1,0 +1,18 @@
+#!/bin/sh
+mkdir -p "$SYNOPKG_PKGVAR"
+# Let the service replace the window's files when it updates itself (ignored if DSM doesn't allow it).
+chown -R "$SYNOPKG_PKGNAME:$SYNOPKG_PKGNAME" "$SYNOPKG_PKGDEST/ui" 2>/dev/null || true
+{
+cat << 'NOTE'
+<p style="font-weight:bold;">One more step: let Elixir into your folders</p>
+<p>Elixir runs as its own system user, so it can only see folders you allow. For each shared folder it should rename in or into (for example <b>data</b>, <b>TV</b>, <b>Movies</b>, <b>Anime</b>):</p>
+<ol style="list-style-type:decimal;list-style-position:inside;">
+<li>Open <b>Control Panel</b> &rarr; <b>Shared Folder</b></li>
+<li>Select the folder and click <b>Edit</b> &rarr; <b>Permissions</b></li>
+<li>Switch the list from <b>Local users</b> to <b>System internal user</b></li>
+<li>Tick <b>Read/Write</b> for <b>Elixir</b> and click <b>Save</b></li>
+</ol>
+<p>Then open <b>Elixir</b> from the main menu. Automatic renaming starts off; renaming by hand works right away.</p>
+NOTE
+} >> "$SYNOPKG_TEMP_LOGFILE"
+exit 0

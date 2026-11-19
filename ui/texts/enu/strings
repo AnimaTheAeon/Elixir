@@ -1,0 +1,3 @@
+[app]
+name = "Elixir"
+description = "Renames TV shows, movies and anime using TheMovieDB, TheTVDB and AniDB."

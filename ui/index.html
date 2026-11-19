@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Elixir</title>
+<link rel="stylesheet" href="elixir.css?v=@VERSION@">
+<script>
+  // Open the start screen in the last look used, before anything else paints.
+  try { document.documentElement.dataset.splash = localStorage.getItem("elixir-theme") || "ff"; } catch (e) { document.documentElement.dataset.splash = "ff"; }
+</script>
+</head>
+<body>
+<!-- Start screen: a flask filling up, with bubbles rising. -->
+<div id="splash" aria-hidden="true">
+  <div class="sp-inner">
+    <div class="sp-glow"></div>
+    <svg class="sp-flask" viewBox="0 0 200 240" role="img" aria-label="A flask filling up">
+      <defs>
+        <clipPath id="sp-body"><path d="M84 22V92L32 188Q22 214 50 216H150Q178 214 168 188L116 92V22Z"/></clipPath>
+        <linearGradient id="sp-liq" x1="0" y1="0" x2="0" y2="1"><stop offset="0" class="sp-top"/><stop offset="1" class="sp-bottom"/></linearGradient>
+      </defs>
+      <g clip-path="url(#sp-body)">
+        <g class="sp-fill">
+          <g class="sp-wave"><path d="M0 134Q15 128 30 134T60 134T90 134T120 134T150 134T180 134T210 134T240 134T270 134V240H0Z" fill="url(#sp-liq)"/></g>
+          <circle class="sp-bub" cx="62" cy="206" r="3.2" style="animation-duration:4.6s;animation-delay:0s"/>
+          <circle class="sp-bub" cx="78" cy="210" r="2" style="animation-duration:5.4s;animation-delay:1.1s"/>
+          <circle class="sp-bub" cx="92" cy="204" r="4" style="animation-duration:6s;animation-delay:2.3s"/>
+          <circle class="sp-bub" cx="104" cy="212" r="2.6" style="animation-duration:4.2s;animation-delay:.6s"/>
+          <circle class="sp-bub" cx="116" cy="206" r="3.4" style="animation-duration:5.8s;animation-delay:3s"/>
+          <circle class="sp-bub" cx="128" cy="210" r="2" style="animation-duration:4.8s;animation-delay:1.7s"/>
+          <circle class="sp-bub" cx="140" cy="204" r="3" style="animation-duration:5.2s;animation-delay:.3s"/>
+          <circle class="sp-bub" cx="70" cy="196" r="1.8" style="animation-duration:6.4s;animation-delay:3.6s"/>
+          <circle class="sp-bub" cx="110" cy="198" r="1.6" style="animation-duration:5s;animation-delay:2.8s"/>
+          <circle class="sp-bub" cx="134" cy="196" r="2.4" style="animation-duration:6.2s;animation-delay:4.1s"/>
+        </g>
+      </g>
+      <path class="sp-glass" d="M84 22V92L32 188Q22 214 50 216H150Q178 214 168 188L116 92V22" fill="none" stroke-width="4" stroke-linejoin="round"/>
+      <rect class="sp-cork" x="78" y="12" width="44" height="12" rx="4"/>
+      <path class="sp-glint" d="M96 40V86" stroke-width="4" stroke-linecap="round"/>
+    </svg>
+    <div class="sp-title">Elixir</div>
+    <div class="sp-bar"></div>
+    <div class="sp-status">Warming up…</div>
+  </div>
+</div>
+
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <!-- Pointing hand cursor (original artwork). -->
+    <symbol id="hand" viewBox="0 0 34 22">
+      <rect x="2" y="6" width="34" height="16" rx="5" fill="rgba(0,0,0,.35)" transform="translate(-1 0)"/>
+      <rect x="1" y="4" width="8" height="15" rx="2" fill="#c4c8d6" stroke="#1e1e28" stroke-width="1.4"/>
+      <rect x="7" y="3" width="15" height="16" rx="5" fill="#fafafc" stroke="#1e1e28" stroke-width="1.4"/>
+      <rect x="17" y="5" width="16" height="6" rx="3" fill="#fafafc" stroke="#1e1e28" stroke-width="1.4"/>
+      <rect x="17" y="11" width="7" height="4" rx="2" fill="#fafafc" stroke="#1e1e28" stroke-width="1.4"/>
+      <rect x="17" y="15" width="7" height="4" rx="2" fill="#fafafc" stroke="#1e1e28" stroke-width="1.4"/>
+      <path d="M10 7 L16 8" stroke="#c4c8d6" stroke-width="1.2"/>
+    </symbol>
+  </defs>
+</svg>
+
+<!-- Xbox: home screen with the orb -->
+<div id="g-home" class="g-only">
+  <div class="g-orb-wrap">
+    <div class="g-ring"></div>
+    <svg class="g-orb" viewBox="0 0 400 400" aria-hidden="true">
+      <defs>
+        <radialGradient id="g-sphere" cx="45%" cy="40%" r="62%">
+          <stop offset="0" stop-color="#b6ff4a"/>
+          <stop offset="0.45" stop-color="#5cc81e"/>
+          <stop offset="0.8" stop-color="#2a8a10"/>
+          <stop offset="1" stop-color="#145a08"/>
+        </radialGradient>
+        <radialGradient id="g-shine" cx="50%" cy="50%" r="50%">
+          <stop offset="0" stop-color="#fff" stop-opacity="0.75"/>
+          <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+        </radialGradient>
+        <filter id="g-glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="10"/></filter>
+      </defs>
+      <circle cx="200" cy="200" r="182" fill="none" stroke="#8de83a" stroke-opacity="0.35" stroke-width="2"/>
+      <circle cx="200" cy="200" r="170" fill="none" stroke="#8de83a" stroke-opacity="0.7" stroke-width="3"/>
+      <circle cx="200" cy="200" r="160" fill="#7ee030" opacity="0.35" filter="url(#g-glow)"/>
+      <circle cx="200" cy="200" r="150" fill="url(#g-sphere)"/>
+      <ellipse cx="150" cy="255" rx="72" ry="50" fill="#d6ff9a" opacity="0.13"/>
+      <ellipse cx="260" cy="290" rx="88" ry="38" fill="#d6ff9a" opacity="0.12"/>
+      <ellipse cx="160" cy="125" rx="52" ry="40" fill="url(#g-shine)"/>
+      <!-- Elixir's emblem: a stoppered flask. -->
+      <g fill="none" stroke="#efffd0" stroke-width="7" stroke-linejoin="round" stroke-linecap="round" opacity="0.9">
+        <path d="M180 128h40"/>
+        <path d="M186 128v40L144 236a24 24 0 0 0 20 36h72a24 24 0 0 0 20-36L214 168V128"/>
+      </g>
+      <path d="M160 228h80l14 22a14 14 0 0 1-12 20H158a14 14 0 0 1-12-20z" fill="#efffd0" opacity="0.5"/>
+      <circle cx="190" cy="244" r="6" fill="#fbffe8"/><circle cx="212" cy="232" r="4" fill="#fbffe8"/><circle cx="204" cy="208" r="3.2" fill="#fbffe8" opacity="0.8"/>
+    </svg>
+  </div>
+  <nav id="g-menu"></nav>
+  <div class="g-status g-status-home"><i class="g-led"></i><div><div class="g-top"></div><div class="g-bottom"></div></div></div>
+  <button class="g-hint g-select" id="g-select"><span class="g-key">ENTER</span>SELECT</button>
+</div>
+
+<div class="layout">
+  <div id="g-head" class="g-only">
+    <div id="g-title"></div>
+    <div class="g-status"><i class="g-led"></i><div><div class="g-top"></div><div class="g-bottom"></div></div></div>
+  </div>
+  <section id="main" class="win">
+
+    <!-- Queue -->
+    <div class="page" data-page="queue">
+      <div class="page-head">
+        <h1>Queue</h1><span class="grow"></span>
+        <button id="queue-clear" title="Remove finished and skipped entries">Clear finished</button>
+      </div>
+      <p class="sub">Files automatic renaming wasn't sure about, plus what practice mode would have done.</p>
+      <div class="divider"></div>
+      <div class="scroll">
+        <div id="old-offers"></div>
+        <div id="queue-list" class="items"></div>
+        <div id="queue-empty" class="empty"><h2>Nothing waiting</h2>When automatic renaming isn't sure about a file, it waits here for you.</div>
+      </div>
+    </div>
+
+    <!-- Rename -->
+    <div class="page active" data-page="rename">
+      <div class="page-head">
+        <h1>Rename</h1><span class="grow"></span>
+        <label class="pick-label">Match with
+          <select id="source">
+            <option value="auto">Auto</option><option value="tmdb">TheMovieDB</option><option value="tvdb">TheTVDB</option><option value="anidb">AniDB</option>
+          </select>
+        </label>
+        <button id="choose" class="big">Choose a folder or file…</button>
+      </div>
+      <p class="sub" id="rename-sub">Pick a folder (or one video). Elixir reads each name, finds it, and shows the new name before anything changes.</p>
+      <div class="divider"></div>
+      <div class="row small" id="batches"></div>
+      <div class="scroll">
+        <div id="rename-list" class="items"></div>
+        <div id="rename-empty" class="empty"><h2>Nothing to rename yet</h2>Choose a folder or a file to start.</div>
+      </div>
+      <div class="footer">
+        <label class="check small"><input type="checkbox" id="select-all" checked><span class="box"></span>All</label>
+        <span id="rename-summary" class="dim small"></span>
+        <span class="grow"></span>
+        <button id="rename-clear">Clear list</button>
+        <button id="rename-go" class="big">Rename</button>
+      </div>
+    </div>
+
+    <!-- Automation -->
+    <div class="page" data-page="auto">
+      <div class="page-head">
+        <h1>Automation</h1><span class="grow"></span>
+        <button id="auto-toggle" class="big" role="switch" aria-checked="false"></button>
+      </div>
+      <p class="sub" id="auto-line">Automatic renaming</p>
+      <div class="divider"></div>
+      <div class="scroll">
+        <div class="section">
+          <label class="check"><input type="checkbox" data-key="practice"><span class="box"></span><span><b>Practice mode</b> <span class="dim">· check new files and write down what would happen, but change nothing. Look at History, then turn this off.</span></span></label>
+        </div>
+        <div class="section">
+          <span class="label">WATCHED FOLDERS</span>
+          <p class="dim small" style="margin:2px 0 4px">Only these are checked, and only files that arrive after you add a folder. Midgar's and Turks' library folders can't be watched.</p>
+          <div id="watched"></div>
+          <div class="row"><button id="add-watched">Add folder</button></div>
+        </div>
+        <div class="section">
+          <span class="label">BEFORE YOU TURN IT ON</span>
+          <div class="row"><button id="preflight-run">Run the checks</button><span class="dim small">Connections, hardlinks between your folders, and permissions.</span></div>
+          <div id="preflight"></div>
+        </div>
+        <div class="section">
+          <span class="label">HOW IT DECIDES</span>
+          <ol class="rules">
+            <li><b>Finished files only.</b> Torrents when Lifestream says they're done and in their final folder; other files once they've stopped growing for 5 minutes.</li>
+            <li><b>Can't ask? Do nothing.</b> If Lifestream, Midgar or Turks don't answer, automation pauses.</li>
+            <li><b>The owner does the work.</b> Anything Midgar or Turks downloaded is theirs. A show Midgar tracks is handed to Midgar to import. Elixir names only what neither tracks.</li>
+            <li><b>Sure, or it asks.</b> A show or movie Elixir hasn't seen before waits here once. After that all four checks must pass: exact title, matching year, the episode exists, only one candidate.</li>
+            <li><b>Nothing lost.</b> Seeding files get a second name (hardlink or instant clone), never moved. Nothing is overwritten or deleted.</li>
+            <li><b>Undo for 30 days.</b> Every step is written down first, so a restart can finish or roll back.</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="page" data-page="history">
+      <div class="page-head"><h1>History</h1><span class="grow"></span></div>
+      <p class="sub">Everything Elixir renamed or handed off, newest first. Undo works for 30 days.</p>
+      <div class="divider"></div>
+      <div class="scroll">
+        <div id="practice-list"></div>
+        <div id="history-list"></div>
+        <div id="history-empty" class="empty"><h2>Nothing yet</h2>Renames show up here.</div>
+      </div>
+    </div>
+
+    <!-- Settings -->
+    <div class="page" data-page="config">
+      <div class="page-head"><h1>Settings</h1><span class="saved">Saved</span><span class="grow"></span><button id="view-log">View Log</button></div>
+      <p class="sub">Changes take effect right away. Keys and passwords are kept on the NAS and never shown again.</p>
+      <div class="divider"></div>
+      <div class="scroll">
+        <div class="section">
+          <span class="label">THE SUITE</span>
+          <div class="grid3">
+            <div class="svc">
+              <div class="svc-head"><b>Lifestream</b><button class="small" data-test="lifestream">Test</button></div>
+              <div class="row"><span class="fl">Address</span><input type="text" data-key="lifestream_url" placeholder="http://localhost:9091"></div>
+              <div class="row"><span class="fl">Username</span><input type="text" data-key="lifestream_user" autocomplete="off"></div>
+              <div class="row"><span class="fl">Password</span><input type="password" data-secret="lifestream_pass" autocomplete="new-password"></div>
+              <div class="row small test-out" data-out="lifestream"></div>
+            </div>
+            <div class="svc">
+              <div class="svc-head"><b>Midgar</b><button class="small" data-test="midgar">Test</button></div>
+              <div class="row"><span class="fl">Address</span><input type="text" data-key="midgar_url" placeholder="http://localhost:8990"></div>
+              <div class="row"><span class="fl">API key</span><input type="password" data-secret="midgar_key" autocomplete="off"></div>
+              <div class="row small dim">Midgar › Settings › General › API Key</div>
+              <div class="row small test-out" data-out="midgar"></div>
+            </div>
+            <div class="svc">
+              <div class="svc-head"><b>Turks</b><button class="small" data-test="turks">Test</button></div>
+              <div class="row"><span class="fl">Address</span><input type="text" data-key="turks_url" placeholder="http://localhost:7878"></div>
+              <div class="row"><span class="fl">API key</span><input type="password" data-secret="turks_key" autocomplete="off"></div>
+              <div class="row small dim">Turks › Settings › General › API key</div>
+              <div class="row small test-out" data-out="turks"></div>
+            </div>
+          </div>
+        </div>
+        <div class="section">
+          <span class="label">DATABASES</span>
+          <div class="grid3">
+            <div class="svc">
+              <div class="svc-head"><b>TheMovieDB</b><button class="small" data-test="tmdb">Test</button></div>
+              <div class="row"><span class="fl">API key</span><input type="password" data-secret="tmdb_key" autocomplete="off"></div>
+              <div class="row small dim">Free from themoviedb.org › Settings › API (the key or the read token). Movies and shows.</div>
+              <div class="row small test-out" data-out="tmdb"></div>
+            </div>
+            <div class="svc">
+              <div class="svc-head"><b>TheTVDB</b><button class="small" data-test="tvdb">Test</button></div>
+              <div class="row"><span class="fl">API key</span><input type="password" data-secret="tvdb_key" autocomplete="off"></div>
+              <div class="row"><span class="fl">PIN</span><input type="password" data-secret="tvdb_pin" autocomplete="off" placeholder="only with a subscriber key"></div>
+              <div class="row small dim">thetvdb.com › API Information. Same episode numbers as Midgar; needed for anime.</div>
+              <div class="row small test-out" data-out="tvdb"></div>
+            </div>
+            <div class="svc">
+              <div class="svc-head"><b>AniDB</b><button class="small" data-test="anidb">Test</button></div>
+              <div class="row"><span class="fl">Client</span><input type="text" data-key="anidb_client" autocomplete="off" placeholder="registered client name"></div>
+              <div class="row"><span class="fl">Version</span><input type="number" min="1" max="99" data-key="anidb_version"></div>
+              <div class="row small dim">Register a client at anidb.net (Account › Clients). Elixir asks at most once every 2.5 seconds, as AniDB requires.</div>
+              <div class="row small test-out" data-out="anidb"></div>
+            </div>
+          </div>
+          <div class="row">Titles in <select data-key="language"><option value="en">English</option><option value="de">German</option><option value="fr">French</option><option value="es">Spanish</option><option value="it">Italian</option><option value="nl">Dutch</option><option value="pt">Portuguese</option><option value="ja">Japanese</option></select></div>
+        </div>
+        <div class="section">
+          <span class="label">WHERE ELIXIR FILES THINGS</span>
+          <p class="dim small" style="margin:2px 0 4px">Only for shows and movies Midgar and Turks don't track. Empty = Midgar's or Turks' first library folder.</p>
+          <div class="row"><span class="fl2">TV shows</span><input type="text" data-key="tv_folder" class="wide" placeholder="from Midgar"><button class="small" data-browse="tv_folder">Browse</button></div>
+          <div class="row"><span class="fl2">Anime</span><input type="text" data-key="anime_folder" class="wide" placeholder="same as TV shows"><button class="small" data-browse="anime_folder">Browse</button></div>
+          <div class="row"><span class="fl2">Movies</span><input type="text" data-key="movies_folder" class="wide" placeholder="from Turks"><button class="small" data-browse="movies_folder">Browse</button></div>
+          <div class="row small dim">A movies folder with genre folders inside (Action Adventure, Comedy, …) gets each movie as one file in its genre, like Turks does.</div>
+        </div>
+        <div class="section">
+          <span class="label">NAMES</span>
+          <div class="row small dim">Shows use Midgar's naming (read from Midgar). Movies:</div>
+          <div class="row"><span class="fl2">Movie file</span><input type="text" data-key="movie_naming.file" class="wide"></div>
+          <div class="row"><span class="fl2">Movie folder</span><input type="text" data-key="movie_naming.folder" class="wide"></div>
+        </div>
+        <div class="section">
+          <span class="label">UPDATES</span>
+          <div class="row"><span id="update-state"></span><span class="grow"></span><button id="update-now" class="small" style="display:none">Update now</button><button id="update-check" class="small">Check now</button></div>
+          <details class="small" id="update-notes" style="display:none"><summary>What's new</summary><div id="update-notes-text" style="white-space:pre-wrap;margin:6px 0"></div></details>
+          <div class="row small" id="update-progress" style="display:none"><div class="bar"><i id="update-bar"></i></div><span id="update-step"></span></div>
+          <label class="check"><input type="checkbox" data-key="auto_update"><span class="box"></span>Install updates automatically</label>
+          <div class="row small" id="update-last"></div>
+          <div class="row small dim" id="update-window" style="display:none">Update now can't replace this window's own screens on this NAS, so a release that changes how it looks also needs the .spk installed (Package Center → Manual Install, or the scheduled task).</div>
+          <div id="update-setup" class="notice" style="display:none">
+            <b>Optional: update while you're away.</b> Update now works by itself. To also have DSM install new versions when you haven't opened Elixir for a while, add a scheduled task:
+            <ol>
+              <li><b>Control Panel</b> &rarr; <b>Task Scheduler</b> &rarr; <b>Create</b> &rarr; <b>Scheduled Task</b> &rarr; <b>User-defined script</b></li>
+              <li><b>General:</b> name it <i>Elixir update</i>, set <b>User</b> to <b>root</b></li>
+              <li><b>Schedule:</b> Daily, at a quiet time such as 4:25</li>
+              <li><b>Task Settings</b> &rarr; <b>Run command</b>, paste:<br><input type="text" id="update-command" class="command" readonly></li>
+              <li>Click <b>OK</b>.</li>
+            </ol>
+          </div>
+        </div>
+        <div class="section">
+          <span class="label">LOOK</span>
+          <div class="row" id="theme-pick"><button data-theme="ff">FFVII menu</button><button data-theme="green">Xbox</button><button data-theme="blades">Blades</button><button data-theme="glass">Dark Glass</button></div>
+        </div>
+        <div class="divider"></div>
+        <div class="row dim small"><span id="about"></span></div>
+      </div>
+    </div>
+
+    <!-- Log -->
+    <div class="page" data-page="log">
+      <div class="page-head"><h1>Log</h1><span class="grow"></span><button id="log-back">Back to Settings</button></div>
+      <p class="sub">What Elixir has been doing.</p>
+      <div class="divider"></div>
+      <div id="log" class="scroll mono"></div>
+    </div>
+  </section>
+
+  <aside class="side">
+    <nav id="menu" class="win"></nav>
+    <div class="spacer"></div>
+    <div class="win">
+      <div class="info-row"><span class="label">Queue</span><span id="info-queue">0</span></div>
+      <div class="info-row"><span class="label">Today</span><span id="info-today">0</span></div>
+    </div>
+  </aside>
+
+  <footer id="statusbar" class="win">Connecting…</footer>
+  <div id="g-foot" class="g-only"><nav id="g-tabs" aria-label="Pages"></nav><button class="g-hint" id="g-back"><span class="g-key">ESC</span>BACK</button></div>
+</div>
+
+<!-- Folder / file picker -->
+<div id="picker" class="modal">
+  <div class="win">
+    <div class="page-head"><h1 style="font-size:22px" id="picker-title">Choose a folder</h1></div>
+    <div id="picker-crumb" class="crumb"></div>
+    <div class="divider"></div>
+    <div id="picker-list" class="picker-list"></div>
+    <div id="picker-note" class="notice" style="display:none"></div>
+    <div class="footer">
+      <button id="picker-up">Up</button>
+      <span class="grow"></span>
+      <button id="picker-cancel">Cancel</button>
+      <button id="picker-choose" class="big">Use this folder</button>
+    </div>
+  </div>
+</div>
+
+<!-- Pick a match -->
+<div id="matcher" class="modal">
+  <div class="win" style="width:min(640px,94vw)">
+    <div class="page-head"><h1 style="font-size:22px">Pick the right match</h1></div>
+    <div class="crumb" id="m-file"></div>
+    <div class="divider"></div>
+    <div class="row">
+      <input type="search" id="m-query" placeholder="Title" style="flex:1;min-width:180px">
+      <input type="number" id="m-year" placeholder="Year" min="1900" max="2100">
+      <select id="m-kind"><option value="show">Show</option><option value="movie">Movie</option></select>
+      <select id="m-source"><option value="auto">Auto</option><option value="tmdb">TheMovieDB</option><option value="tvdb">TheTVDB</option><option value="anidb">AniDB</option></select>
+      <button id="m-search">Search</button>
+    </div>
+    <div id="m-list" class="picker-list"></div>
+    <label class="check small"><input type="checkbox" id="m-batch" checked><span class="box"></span>Use this for every file with the same name in this list</label>
+    <div class="footer"><span id="m-note" class="bad small"></span><span class="grow"></span><button id="m-cancel">Cancel</button></div>
+  </div>
+</div>
+
+<div id="overlay" class="overlay-msg"><div class="win" style="max-width:460px"><h1 style="margin:0 0 6px;font-size:22px" id="overlay-title"></h1><div id="overlay-text"></div></div></div>
+<div id="toast" class="toast" role="status"></div>
+
+<script src="app.js?v=@VERSION@"></script>
+</body>
+</html>

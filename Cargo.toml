@@ -1,0 +1,30 @@
+[package]
+name = "elixir"
+version = "1.0.0"
+edition = "2021"
+description = "Elixir for Synology DSM: renames TV shows, movies and anime using TheMovieDB, TheTVDB and AniDB."
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "elixir"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tiny_http = "0.12"
+libc = "0.2"
+regex = { version = "1", default-features = false, features = ["std", "unicode-perl", "unicode-case"] }
+unicode-normalization = "0.1"
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
