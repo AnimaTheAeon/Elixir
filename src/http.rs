@@ -69,12 +69,31 @@ fn quote(v: &str) -> String {
     out
 }
 
+/// curl, without a console window popping up on Windows (Windows 10 and 11 include curl).
+pub fn curl_command() -> Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let sys = std::env::var_os("SystemRoot").map(std::path::PathBuf::from).unwrap_or_else(|| "C:\\Windows".into());
+        let exe = sys.join("System32").join("curl.exe");
+        let mut c = Command::new(if exe.is_file() { exe } else { "curl.exe".into() });
+        // CREATE_NO_WINDOW
+        c.creation_flags(0x0800_0000);
+        c
+    }
+    #[cfg(not(windows))]
+    {
+        Command::new("curl")
+    }
+}
+
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Send a request. Errors are plain sentences that name `service`, never an address.
 pub fn send(service: &str, req: &Request) -> Result<Response, String> {
     let dir = std::env::temp_dir().join(format!("elixir-http-{}-{}", std::process::id(), SEQ.fetch_add(1, Ordering::SeqCst)));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
@@ -103,13 +122,13 @@ pub fn send(service: &str, req: &Request) -> Result<Response, String> {
         cfg.push_str(&format!("dump-header = {}\n", quote(&hdr.display().to_string())));
         cfg.push_str(&format!("max-time = {}\n", req.timeout.max(5)));
         cfg.push_str("connect-timeout = 10\nsilent\nshow-error\nuser-agent = \"Elixir\"\nwrite-out = \"%{http_code}\"\n");
-        let mut child = Command::new("curl")
+        let mut child = curl_command()
             .args(["--config", "-"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .map_err(|_| "Elixir couldn't run curl on this NAS".to_string())?;
+            .map_err(|_| if cfg!(windows) { "Elixir couldn't run Windows' curl (C:\\Windows\\System32\\curl.exe)".to_string() } else { "Elixir couldn't run curl on this NAS".to_string() })?;
         child.stdin.take().ok_or("no stdin")?.write_all(cfg.as_bytes()).map_err(|e| e.to_string())?;
         let output = child.wait_with_output().map_err(|e| e.to_string())?;
         match output.status.code() {

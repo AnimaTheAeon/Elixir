@@ -1,4 +1,8 @@
-name: Build Synology package
+name: Build
+
+# Builds the Windows app (installer) and the Synology package (.spk) from the
+# same source. A push to main with a new version number publishes one release
+# with both files; both updaters read that release.
 
 on:
   push:
@@ -10,18 +14,59 @@ permissions:
   contents: write
 
 jobs:
-  spk:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: windows
+
+      - name: Test
+        run: cargo test --release
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Read version
+        id: ver
+        shell: pwsh
+        run: |
+          $v = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          "version=$v" >> $env:GITHUB_OUTPUT
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          choco upgrade innosetup -y --no-progress | Out-Null
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "/DMyAppVersion=${{ steps.ver.outputs.version }}" installer\elixir.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: elixir-windows-x64
+          path: target/installer/*.exe
+
+  synology:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.spk.outputs.version }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: synology
       - name: Install musl tools
         run: sudo apt-get update && sudo apt-get install -y musl-tools
       - name: Test
         run: cargo test
+      - name: Check the window's script
+        run: node --check ui/app.js
       - name: Build static binary
         run: cargo build --release --target x86_64-unknown-linux-musl
       - name: Check it's static
@@ -36,30 +81,41 @@ jobs:
         with:
           name: elixir-synology-x86_64
           path: dist/*.spk
-      # A push to main with a version that has no release yet publishes it.
-      - name: Check for existing release
+
+  release:
+    needs: [windows, synology]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      # A version that already has a release (with both files) isn't published again.
+      - name: Check for an existing release
         id: rel
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # "Exists" only counts if the .spk is attached.
-          n=$(gh release view "v${{ steps.spk.outputs.version }}" --repo "${{ github.repository }}" --json assets --jq '[.assets[].name | select(endswith(".spk"))] | length' 2>/dev/null || echo 0)
-          if [ "${n:-0}" -gt 0 ]; then
+          n=$(gh release view "v${{ needs.synology.outputs.version }}" --repo "${{ github.repository }}" --json assets --jq '[.assets[].name | select(endswith(".spk") or endswith(".exe"))] | length' 2>/dev/null || echo 0)
+          if [ "${n:-0}" -ge 2 ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
+      - uses: actions/download-artifact@v4
+        if: steps.rel.outputs.exists == 'false'
+        with:
+          path: out
+          merge-multiple: true
       - name: Publish release
-        if: github.event_name == 'push' && steps.rel.outputs.exists == 'false'
+        if: steps.rel.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v${{ steps.spk.outputs.version }}
+          tag_name: v${{ needs.synology.outputs.version }}
           target_commitish: ${{ github.sha }}
-          name: Elixir for Synology v${{ steps.spk.outputs.version }}
-          files: ${{ steps.spk.outputs.file }}
+          name: Elixir v${{ needs.synology.outputs.version }}
+          files: |
+            out/**/Elixir-Setup-*.exe
+            out/**/*.spk
           make_latest: true
           body: |
-            Elixir for Synology DSM 7.2 (x86-64 models such as the DS923+).
+            **Windows:** run `Elixir-Setup-${{ needs.synology.outputs.version }}.exe`. Installed copies update themselves from here.
 
-            **Install:** Package Center → Manual Install → choose the .spk → Next.
-            **Then:** give the `Elixir` system user Read/Write on your download and library shares (Control Panel → Shared Folder → Edit → Permissions → System internal user), then open Elixir from the main menu.
+            **Synology (DSM 7.2, x86-64 models such as the DS923+):** Package Center → Manual Install → choose `Elixir-${{ needs.synology.outputs.version }}-x86_64.spk` → Next. Then give the `Elixir` system user Read/Write on your download and library shares (Control Panel → Shared Folder → Edit → Permissions → System internal user) and open Elixir from the main menu.

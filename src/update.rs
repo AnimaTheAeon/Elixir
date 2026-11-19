@@ -9,6 +9,9 @@
 //! with RESTART_CODE; elixir-run.sh swaps it in and starts it again. The
 //! scheduled task stays for hands-off updates and also refreshes the window's
 //! own files, which only a real package install can replace.
+//!
+//! On Windows "Update now" downloads the installer from the same release,
+//! checks it, and runs it silently; it closes Elixir, updates it and starts it again.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -25,7 +28,9 @@ use crate::{info, warn};
 
 pub const REPO: &str = "AnimaTheAeon/Elixir";
 const CHECK_EVERY: Duration = Duration::from_secs(12 * 3600);
+#[cfg(unix)]
 const SYNOPKG: &str = "/usr/syno/bin/synopkg";
+#[cfg(unix)]
 const PACKAGE: &str = "Elixir";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -99,7 +104,7 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
 }
 
 fn curl(args: &[&str]) -> Result<Vec<u8>, String> {
-    let output = Command::new("curl")
+    let output = crate::http::curl_command()
         .args(["-fsSL", "--retry", "2", "--connect-timeout", "20", "-A", "Elixir"])
         .args(args)
         .output()
@@ -122,8 +127,8 @@ pub fn parse_release(json: &Value) -> Result<Release, String> {
         .as_array()
         .into_iter()
         .flatten()
-        .find(|a| a["name"].as_str().is_some_and(|n| n.ends_with("-x86_64.spk")))
-        .ok_or("The latest release has no .spk for this NAS")?;
+        .find(|a| a["name"].as_str().is_some_and(asset_is_ours))
+        .ok_or(if cfg!(windows) { "The latest release has no Windows installer" } else { "The latest release has no .spk for this NAS" })?;
     Ok(Release {
         version: tag.trim_start_matches(['v', 'V']).to_string(),
         notes: json["body"].as_str().unwrap_or("").to_string(),
@@ -135,6 +140,15 @@ pub fn parse_release(json: &Value) -> Result<Release, String> {
             .map(|d| d.to_ascii_lowercase()),
         size: asset["size"].as_u64().unwrap_or(0),
     })
+}
+
+/// The release file for this platform.
+fn asset_is_ours(name: &str) -> bool {
+    if cfg!(windows) {
+        name.starts_with("Elixir-Setup-") && name.ends_with(".exe")
+    } else {
+        name.ends_with("-x86_64.spk")
+    }
 }
 
 pub fn latest_release() -> Result<Release, String> {
@@ -181,8 +195,16 @@ fn check_now_blocking() {
             {
                 info!("Update available: Elixir {}", release.version);
             }
+            let auto = cfg!(windows) && is_newer(&release.version, current_version()) && Config::load(&var_dir().join("config.json")).auto_update;
             s.latest = Some(release);
             s.error.clear();
+            if auto {
+                drop(s);
+                info!("Installing the update automatically (Settings: Install updates automatically)");
+                if let Err(e) = start_install() {
+                    warn!("Automatic update didn't start: {e}");
+                }
+            }
         }
         Err(error) => {
             warn!("Update check failed: {error}");
@@ -221,11 +243,18 @@ pub fn status_json() -> Value {
         "last_install": last_install(),
         "command": command_line(),
         "can_install_now": can_install_now(),
-        "window_updates": std::env::var("ELIXIR_WINDOW_UPDATES").is_ok(),
+        "window_updates": cfg!(windows) || std::env::var("ELIXIR_WINDOW_UPDATES").is_ok(),
+        "platform": if cfg!(windows) { "windows" } else { "nas" },
         "progress": progress().lock().unwrap_or_else(|e| e.into_inner()).clone(),
     })
 }
 
+#[cfg(windows)]
+pub fn command_line() -> String {
+    String::new()
+}
+
+#[cfg(unix)]
 pub fn command_line() -> String {
     std::env::var("SYNOPKG_PKGDEST")
         .map(|d| format!("{d}/bin/elixir update"))
@@ -235,6 +264,7 @@ pub fn command_line() -> String {
 // ---------- installing from the window (no root) ----------
 
 /// Exit code that tells elixir-run.sh "start me again".
+#[cfg(unix)]
 pub const RESTART_CODE: i32 = 75;
 
 static INSTALLING: AtomicBool = AtomicBool::new(false);
@@ -264,13 +294,17 @@ fn update_dir() -> Option<PathBuf> {
     std::env::var("ELIXIR_UPDATE_DIR").ok().filter(|d| !d.trim().is_empty()).map(PathBuf::from)
 }
 
-/// True when the service can install updates by itself (elixir-run.sh runs it).
+/// True when the service can install updates by itself (elixir-run.sh runs it;
+/// on Windows the installer does it).
 pub fn can_install_now() -> bool {
-    update_dir().is_some()
+    cfg!(windows) || update_dir().is_some()
 }
 
 /// "Update now": download, check and unpack in the background, then restart.
 pub fn start_install() -> Result<(), String> {
+    #[cfg(windows)]
+    let dir = var_dir().join("update");
+    #[cfg(unix)]
     let dir = update_dir().ok_or("Elixir wasn't started by its package script, so it can't update itself. Install the new Elixir package in Package Center.")?;
     let release = state()
         .lock()
@@ -289,6 +323,23 @@ pub fn start_install() -> Result<(), String> {
             let from = current_version().to_string();
             info!("Updating Elixir {from} -> {}", release.version);
             match install_into(&release, &dir) {
+                #[cfg(windows)]
+                Ok(()) => {
+                    set_progress(&release.version, "restart", 1, 1, "");
+                    std::thread::sleep(Duration::from_secs(2));
+                    // Wait for any rename in progress, then hand over to the installer.
+                    let _busy = crate::engine::APPLY_LOCK.lock();
+                    record(true, &from, &release.version, &format!("Updated to {}", release.version));
+                    if let Err(e) = run_installer(&dir, &release) {
+                        warn!("Update failed: {e}");
+                        record(false, &from, &release.version, &e);
+                        set_progress(&release.version, "failed", 0, 0, &e);
+                        INSTALLING.store(false, Ordering::SeqCst);
+                        return;
+                    }
+                    std::process::exit(0);
+                }
+                #[cfg(unix)]
                 Ok(()) => {
                     record(true, &from, &release.version, &format!("Updated to {}", release.version));
                     set_progress(&release.version, "restart", 1, 1, "");
@@ -311,6 +362,7 @@ pub fn start_install() -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[cfg(unix)]
 fn tar(args: &[&str]) -> Result<(), String> {
     let out = Command::new("tar").args(args).output().map_err(|e| format!("Couldn't run tar: {e}"))?;
     if out.status.success() {
@@ -320,7 +372,63 @@ fn tar(args: &[&str]) -> Result<(), String> {
     }
 }
 
+/// The installer's file in the update folder.
+#[cfg(windows)]
+fn installer_path(dir: &Path, release: &Release) -> PathBuf {
+    dir.join(format!("Elixir-Setup-{}.exe", release.version))
+}
+
+/// Download the installer and check it. Nothing is changed yet.
+#[cfg(windows)]
+fn install_into(release: &Release, dir: &Path) -> Result<(), String> {
+    let _ = std::fs::remove_dir_all(dir);
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let exe = installer_path(dir, release);
+    let part = dir.join("download.part");
+    let part_str = part.to_string_lossy().to_string();
+    let mut child = crate::http::curl_command()
+        .args(["-fsSL", "--retry", "2", "--connect-timeout", "20", "--max-time", "900", "-A", "Elixir", "-o", &part_str, &release.spk_url])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Download failed: couldn't run curl: {e}"))?;
+    let status = loop {
+        if let Some(st) = child.try_wait().map_err(|e| e.to_string())? {
+            break st;
+        }
+        let done = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+        set_progress(&release.version, "download", done, release.size, "");
+        std::thread::sleep(Duration::from_millis(400));
+    };
+    if !status.success() {
+        return Err("Download failed: couldn't reach the update server. Try again.".into());
+    }
+    let size = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+    set_progress(&release.version, "verify", size, size, "");
+    match &release.sha256 {
+        Some(expected) if &sha256_file(&part)? != expected => return Err("The download didn't match its checksum. Nothing was changed.".to_string()),
+        Some(_) => {}
+        None => return Err("The release has no checksum to check the download against. Nothing was changed.".to_string()),
+    }
+    std::fs::rename(&part, &exe).map_err(|e| format!("Couldn't keep the download: {e}"))?;
+    Ok(())
+}
+
+/// Start the installer silently; it closes Elixir, updates it and starts it again.
+#[cfg(windows)]
+fn run_installer(dir: &Path, release: &Release) -> Result<(), String> {
+    let exe = installer_path(dir, release);
+    let log = dir.join("setup.log");
+    Command::new(&exe)
+        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"])
+        .arg(format!("/LOG={}", log.display()))
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| format!("Couldn't start the installer: {e}"))
+}
+
 /// Download the package, check it and leave the new program in `<dir>/next`.
+#[cfg(unix)]
 fn install_into(release: &Release, dir: &Path) -> Result<(), String> {
     let work = dir.join("work");
     let _ = std::fs::remove_dir_all(&work);
@@ -386,6 +494,7 @@ fn install_into(release: &Release, dir: &Path) -> Result<(), String> {
 
 // ---------- installing (root, from Task Scheduler) ----------
 
+#[cfg(unix)]
 /// `elixir update [--force]`. Returns the process exit code.
 pub fn run_cli(args: &[String]) -> i32 {
     let force = args.iter().any(|a| a == "--force");
@@ -442,6 +551,7 @@ pub fn run_cli(args: &[String]) -> i32 {
     }
 }
 
+#[cfg(unix)]
 /// The version DSM has installed, e.g. "1.0.4" from "1.0.4-0012".
 fn installed_version() -> Option<String> {
     let info = std::fs::read_to_string(format!("/var/packages/{PACKAGE}/INFO")).ok()?;
@@ -456,12 +566,16 @@ fn record(ok: bool, from: &str, to: &str, message: &str) {
     if let Ok(bytes) = serde_json::to_vec_pretty(&result) {
         let path = result_path();
         if crate::config::write_atomic(&path, &bytes).is_ok() {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644));
+            }
         }
     }
 }
 
+#[cfg(unix)]
 fn install(release: &Release) -> Result<(), String> {
     let dir = std::env::temp_dir().join(format!("elixir-update-{}", std::process::id()));
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -470,6 +584,7 @@ fn install(release: &Release) -> Result<(), String> {
     result
 }
 
+#[cfg(unix)]
 fn download_and_install(release: &Release, dir: &Path) -> Result<(), String> {
     let spk = dir.join(&release.spk_name);
     let spk_str = spk.to_string_lossy().to_string();
@@ -500,13 +615,19 @@ fn download_and_install(release: &Release, dir: &Path) -> Result<(), String> {
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
-    let output = Command::new("sha256sum").arg(path).output().map_err(|e| format!("Couldn't run sha256sum: {e}"))?;
-    String::from_utf8_lossy(&output.stdout)
-        .split_whitespace()
-        .next()
-        .map(|s| s.to_ascii_lowercase())
-        .filter(|s| s.len() == 64)
-        .ok_or_else(|| "Couldn't verify the download".into())
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut f = std::fs::File::open(path).map_err(|_| "Couldn't verify the download".to_string())?;
+    let mut h = Sha256::new();
+    let mut buf = vec![0u8; 1 << 16];
+    loop {
+        let n = f.read(&mut buf).map_err(|_| "Couldn't verify the download".to_string())?;
+        if n == 0 {
+            break;
+        }
+        h.update(&buf[..n]);
+    }
+    Ok(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 #[cfg(test)]
@@ -523,6 +644,7 @@ mod tests {
         assert!(!is_newer("1.0.4-0012", "1.0.4"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn release_parsing() {
         let json = json!({

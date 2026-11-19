@@ -1,4 +1,6 @@
-// Elixir for DSM: the window. Talks to the Elixir service through api.cgi.
+// Elixir's window (DSM and Windows). Talks to the Elixir service through api.cgi.
+const WIN = !!window.ELIXIR_WINDOWS;
+if (WIN) document.documentElement.classList.add("on-windows");
 "use strict";
 
 const PAGES = [["queue", "Queue"], ["rename", "Rename"], ["auto", "Automation"], ["history", "History"], ["config", "Settings"]];
@@ -21,6 +23,7 @@ const closeModals = () => $$(".modal.open").forEach((m) => m.classList.remove("o
 // ---------- API ----------
 
 async function getToken() {
+  if (WIN) return;
   try {
     const r = await fetch("/webman/login.cgi", { credentials: "same-origin" });
     const j = await r.json();
@@ -32,7 +35,7 @@ async function api(route, body) {
   const opts = {
     method: body === undefined ? "GET" : "POST",
     credentials: "same-origin",
-    headers: { "X-SYNO-TOKEN": token },
+    headers: WIN ? { "X-Elixir-Key": window.ELIXIR_KEY || "" } : { "X-SYNO-TOKEN": token },
   };
   if (body !== undefined) {
     opts.headers["Content-Type"] = "application/json";
@@ -44,11 +47,11 @@ async function api(route, body) {
   let data = {};
   try { data = await res.json(); } catch (e) { /* empty */ }
   if (res.status === 401) {
-    showOverlay("Sign in needed", esc(data.error || "Your DSM session has expired. Sign in to DSM again."));
+    showOverlay("Sign in needed", esc(data.error || (WIN ? "Close this window and open Elixir again." : "Your DSM session has expired. Sign in to DSM again.")));
     throw new Error("auth");
   }
   if (res.status === 503) {
-    showOverlay("Elixir isn't running", esc(data.error || "Start Elixir in Package Center."));
+    showOverlay("Elixir isn't running", esc(data.error || (WIN ? "Start Elixir again from the Start menu." : "Start Elixir in Package Center.")));
     throw new Error("down");
   }
   hideOverlay();
@@ -488,7 +491,7 @@ function itemRow(i, view) {
     : "";
   const newName = i.state === "midgar" ? `Midgar imports it into ${esc(i.tracked_title)}`
     : i.target_name ? esc(i.target_name) : i.state === "matching" ? "…" : "—";
-  const where = i.target && i.state !== "midgar" ? `<div class="path" title="${esc(i.target)}">${esc(i.target.replace(/\/[^/]*$/, ""))}</div>` : "";
+  const where = i.target && i.state !== "midgar" ? `<div class="path" title="${esc(i.target)}">${esc(i.target.replace(/[\\/][^\\/]*$/, ""))}</div>` : "";
   const extra = [
     i.label ? esc(i.label) : "",
     i.sidecars ? `+ ${i.sidecars} file${i.sidecars === 1 ? "" : "s"} going along` : "",
@@ -497,7 +500,7 @@ function itemRow(i, view) {
   const actions = [
     pickable ? `<button class="small" data-pick="${i.id}">Pick another match…</button>` : "",
     i.state === "practice" ? `<button class="small" data-doit="${i.id}">Do it now</button>` : "",
-    view === "queue" && i.state === "ready" || view === "queue" && i.state === "pick" && i.target ? `<button class="small" data-doit="${i.id}">Rename</button>` : "",
+    view === "queue" && i.state === "ready" || view === "queue" && i.state === "pick" && i.plan ? `<button class="small" data-doit="${i.id}">${i.plan === "midgar" ? "Send to Midgar" : "Rename"}</button>` : "",
     view === "queue" && pickable ? `<button class="small" data-skip="${i.id}">Skip</button>` : "",
   ].join("");
   return `<div class="item st-${i.state}" data-id="${i.id}">
@@ -562,7 +565,7 @@ function renderAuto() {
   const old = Object.fromEntries((status.old || []).map((o) => [o.folder, o.count]));
   const box = $("#watched");
   if (!config.watched.length) {
-    box.innerHTML = `<div class="empty small" style="padding:14px 0">No folders yet. Add your downloads folder (for example /volume1/data/torrents).</div>`;
+    box.innerHTML = `<div class="empty small" style="padding:14px 0">No folders yet. Add your downloads folder (for example ${WIN ? "D:\\Downloads" : "/volume1/data/torrents"}).</div>`;
   } else {
     box.innerHTML = config.watched.map((p) => {
       const f = info[p] || {};
@@ -571,10 +574,11 @@ function renderAuto() {
       const takeover = (f.message || "").includes("Take over") ? `<button class="small" data-takeover="${esc(p)}">Take over</button>` : "";
       const bits = [f.waiting ? `${f.waiting} waiting to finish` : "", old[p] ? `${old[p]} from before (left alone)` : ""].filter(Boolean).join(" · ");
       return `<div class="party"><div class="body">
-        <div class="title"><span class="name">${esc(p.split("/").pop() || p)}</span><span class="tag ${st[1]}">${st[0]}</span>
+        <div class="title"><span class="name">${esc(p.split(/[\\/]/).filter(Boolean).pop() || p)}</span><span class="tag ${st[1]}">${st[0]}</span>
           <span class="actions">${takeover}<button class="small" data-unwatch="${esc(p)}">Remove</button></span></div>
         <div class="path">${esc(p)}</div>
         ${bits ? `<div class="dim small">${esc(bits)}</div>` : ""}
+        <label class="noseed" title="Automation then runs here without Lifestream, and renamed files move instead of getting a second name"><input type="checkbox" data-noseed="${esc(p)}" ${(config.no_seed || []).includes(p) ? "checked" : ""}> Nothing seeds from this folder</label>
         ${f.message && f.state !== "watching" ? `<div class="notice">${esc(f.message)}</div>` : ""}
       </div></div>`;
     }).join("");
@@ -668,7 +672,7 @@ function renderUpdate(u) {
     const w = ago(u.now - last.time);
     lastEl.innerHTML = last.ok ? `<span class="label">TASK</span>&nbsp; Ran ${w}: ${esc(last.message)}` : `<span class="label">TASK</span>&nbsp; <span class="bad">Ran ${w}: ${esc(last.message)}</span>`;
   } else lastEl.innerHTML = "";
-  $("#update-setup").style.display = config && config.auto_update && !(last && last.time) ? "" : "none";
+  $("#update-setup").style.display = !WIN && config && config.auto_update && !(last && last.time) ? "" : "none";
   $("#update-window").style.display = u.can_install_now && !u.window_updates ? "" : "none";
   const cmd = $("#update-command");
   if (cmd.value !== u.command) cmd.value = u.command || "";
@@ -680,7 +684,7 @@ function renderStatus() {
   $("#info-today").textContent = Number(status.renamed_today || 0).toLocaleString();
   renderAuto();
   renderUpdate(status.update || {});
-  $("#about").textContent = `Elixir for DSM v${status.version}`;
+  $("#about").textContent = `Elixir for ${WIN ? "Windows" : "DSM"} v${status.version}`;
   const a = status.auto || {};
   const c = status.connected || {};
   let text, level = "good";
@@ -713,6 +717,7 @@ function applyConfigToForm() {
   applyTheme(config.theme);
   try { localStorage.setItem("elixir-theme", config.theme); } catch (e) { /* ignore */ }
   renderAuto();
+  renderNaming();
 }
 
 let saveTimer = null;
@@ -748,6 +753,75 @@ async function flushSave() {
   }
 }
 
+// ---------- names ----------
+
+const PRESETS = {
+  plex: {
+    episode_naming: { standard: "{Series TitleYear} - S{season:00}E{episode:00} - {Episode Title}", daily: "{Series TitleYear} - {Air-Date} - {Episode Title}", anime: "{Series TitleYear} - S{season:00}E{episode:00} - {Episode Title}", series_folder: "{Series TitleYear}", season_folder: "Season {season:00}", specials_folder: "Season 00", multi_style: 5, colon: 4 },
+    movie_naming: { file: "{Movie TitleYear}", folder: "{Movie TitleYear}", colon: 4 },
+  },
+  jellyfin: {
+    episode_naming: { standard: "{Series Title} S{season:00}E{episode:00} - {Episode Title}", daily: "{Series Title} {Air-Date} - {Episode Title}", anime: "{Series Title} S{season:00}E{episode:00} - {Episode Title}", series_folder: "{Series TitleYear}", season_folder: "Season {season:00}", specials_folder: "Season 00", multi_style: 5, colon: 4 },
+    movie_naming: { file: "{Movie TitleYear}", folder: "{Movie TitleYear}", colon: 4 },
+  },
+  kodi: {
+    episode_naming: { standard: "{Series Title} S{season:00}E{episode:00} - {Episode Title}", daily: "{Series Title} {Air-Date} - {Episode Title}", anime: "{Series Title} S{season:00}E{episode:00} - {Episode Title}", series_folder: "{Series TitleYear}", season_folder: "Season {season}", specials_folder: "Specials", multi_style: 5, colon: 4 },
+    movie_naming: { file: "{Movie TitleYear}", folder: "{Movie TitleYear}", colon: 4 },
+  },
+};
+
+// What's typed right now (examples update while typing, before saving).
+function namingFromForm() {
+  const ep = { ...(config.episode_naming || {}) }, mv = { ...(config.movie_naming || {}) };
+  $$("[data-naming]").forEach((el) => {
+    const [k, sub] = el.dataset.key.split(".");
+    if (k === "episode_naming") ep[sub] = el.value; else mv[sub] = el.value;
+  });
+  return { ep, mv };
+}
+
+let namingTimer = null;
+function renderNaming(soon) {
+  clearTimeout(namingTimer);
+  namingTimer = setTimeout(async () => {
+    if (!config) return;
+    const preset = config.naming_preset || "midgar";
+    if (document.activeElement !== $("#naming-preset")) $("#naming-preset").value = preset;
+    const { ep, mv } = namingFromForm();
+    let r;
+    try { r = await api("naming/example", { preset, episode_naming: ep, movie_naming: mv }); } catch (e) { return; }
+    const midgar = preset === "midgar";
+    $$('[data-naming="ep"]').forEach((el) => {
+      el.disabled = midgar;
+      if (midgar && r.naming) { const sub = el.dataset.key.split(".")[1]; el.value = r.naming[sub] ?? ""; }
+    });
+    $("#naming-note").textContent = midgar ? (r.midgar ? "Read from Midgar" : "Midgar's style (Midgar isn't connected)") : preset === "custom" ? "Your own formats" : "Edit any field to make it your own";
+    const sep = WIN ? "\\" : "/";
+    const rows = [["Episode", r.episode], ["Two episodes", r.multi], ["Special", r.special], ["Daily show", r.daily], ["Movie", r.movie]];
+    $("#naming-examples").innerHTML = rows.map(([k, v]) => `<span class="ex-k">${k}</span><span class="ex-v">${esc((v || "").split(/[\\/]/).join(sep))}</span>`).join("");
+  }, soon ? 0 : 250);
+}
+
+function wireNaming() {
+  $("#naming-preset").onchange = (e) => {
+    const p = e.target.value;
+    const changes = { naming_preset: p };
+    if (PRESETS[p]) Object.assign(changes, JSON.parse(JSON.stringify(PRESETS[p])));
+    Object.assign(config, changes);
+    applyConfigToForm();
+    queueSave(changes, true);
+    renderNaming(true);
+  };
+  document.addEventListener("input", (e) => { if (e.target.dataset && e.target.dataset.naming) renderNaming(); });
+}
+
+// Windows: files or folders dropped on the window go to Rename.
+window.elixirDrop = async (paths) => {
+  if (!paths || !paths.length) return;
+  if (paths.length > 1) toast(`Renaming the first of ${paths.length} dropped items. Drop their folder to do them all at once.`);
+  await startScan(paths[0]);
+};
+
 function wireSettings() {
   document.addEventListener("change", (e) => {
     const el = e.target;
@@ -756,7 +830,15 @@ function wireSettings() {
       const [k, sub] = el.dataset.key.split(".");
       if (sub) {
         config[k] = { ...config[k], [sub]: v };
-        queueSave({ [k]: config[k] });
+        const changes = { [k]: config[k] };
+        // Editing a preset's names makes them your own.
+        if (el.dataset.naming && (k === "episode_naming" ? config.naming_preset !== "custom" && config.naming_preset !== "midgar" : PRESETS[config.naming_preset])) {
+          config.naming_preset = "custom";
+          changes.naming_preset = "custom";
+          if (k === "movie_naming") changes.episode_naming = namingFromForm().ep;
+        }
+        queueSave(changes);
+        if (el.dataset.naming) renderNaming();
       } else {
         config[k] = v;
         queueSave({ [k]: v });
@@ -766,6 +848,13 @@ function wireSettings() {
       queueSave({ [el.dataset.secret]: el.value });
       el.value = "";
     }
+  });
+  document.addEventListener("change", async (e) => {
+    const p = e.target.dataset && e.target.dataset.noseed;
+    if (p === undefined) return;
+    const on = e.target.checked;
+    const r = await act(() => api("watched/noseed", { path: p, on }));
+    if (r) { config.no_seed = (config.no_seed || []).filter((f) => f !== p).concat(on ? [p] : []); refreshStatus(); }
   });
   document.addEventListener("click", async (e) => {
     const t = e.target.closest("[data-test]");
@@ -794,7 +883,7 @@ async function openPicker(path = "") {
   if (!data) return;
   pickerPath = data.path;
   $("#picker-title").textContent = pickerMode === "rename" ? "Choose a folder or a video" : pickerMode === "watch" ? "Choose a folder to watch" : "Choose a folder";
-  $("#picker-crumb").textContent = data.path || "Shared folders";
+  $("#picker-crumb").textContent = data.path || (WIN ? "This PC" : "Shared folders");
   $("#picker-up").disabled = data.parent === null || data.parent === undefined;
   $("#picker-up").dataset.parent = data.parent ?? "";
   $("#picker-choose").disabled = !data.path;
@@ -828,6 +917,9 @@ function wirePicker() {
     if (await startScan(item.dataset.path)) $("#picker").classList.remove("open");
   };
   $("#picker-up").onclick = (e) => openPicker(e.target.dataset.parent || "");
+  const goTyped = () => { const v = $("#picker-path").value.trim(); if (v) openPicker(v); };
+  $("#picker-go").onclick = goTyped;
+  $("#picker-path").onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); goTyped(); } };
   $("#picker-cancel").onclick = () => $("#picker").classList.remove("open");
   $("#picker-choose").onclick = async () => {
     const note = $("#picker-note");
@@ -1068,6 +1160,7 @@ setTimeout(() => splashDone(), 9000);
   buildMenu();
   buildGreenMenu();
   wireSettings();
+  wireNaming();
   wirePicker();
   wireMatcher();
   wireActions();

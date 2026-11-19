@@ -41,7 +41,19 @@ pub fn timestamp() -> String {
     )
 }
 
+/// Offset from Windows' time zone setting (follows daylight saving).
+#[cfg(windows)]
+pub fn local_offset_seconds() -> i64 {
+    use windows_sys::Win32::System::Time::{GetTimeZoneInformation, TIME_ZONE_INFORMATION};
+    // SAFETY: zeroed plain-data struct, filled by the call.
+    let mut tz: TIME_ZONE_INFORMATION = unsafe { std::mem::zeroed() };
+    let id = unsafe { GetTimeZoneInformation(&mut tz) };
+    let bias = tz.Bias + if id == 2 { tz.DaylightBias } else if id == 1 { tz.StandardBias } else { 0 };
+    -(bias as i64) * 60
+}
+
 /// Offset from /etc/localtime via the TZ-aware `date` output, cached.
+#[cfg(unix)]
 pub fn local_offset_seconds() -> i64 {
     static OFFSET: OnceLock<i64> = OnceLock::new();
     *OFFSET.get_or_init(|| {

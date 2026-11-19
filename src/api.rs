@@ -1,11 +1,18 @@
 //! Loopback-only JSON API used by the DSM window (through api.cgi).
 //! Every request must carry a valid DSM session for an administrator.
+//!
+//! On Windows the same server also serves the window's pages, and requests
+//! must carry the key the window was given when it opened.
 
 use std::collections::HashMap;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Instant;
+#[cfg(unix)]
+use std::time::Duration;
 
 use serde_json::{json, Value};
 use tiny_http::{Header, Method, Request, Response, Server};
@@ -16,6 +23,7 @@ use crate::suite::{self, Arr};
 use crate::{info, warn};
 
 pub const DEFAULT_PORT: u16 = 5471;
+#[cfg(unix)]
 const AUTH_TTL: Duration = Duration::from_secs(300);
 
 pub fn port() -> u16 {
@@ -24,6 +32,7 @@ pub fn port() -> u16 {
 
 type AuthCache = Mutex<HashMap<(String, String), (String, Instant)>>;
 
+#[cfg(unix)]
 pub fn serve(shared: Arc<Shared>) {
     let addr = format!("127.0.0.1:{}", port());
     let server = match Server::http(&addr) {
@@ -34,6 +43,19 @@ pub fn serve(shared: Arc<Shared>) {
         }
     };
     info!("API listening on {addr}");
+    serve_on(server, shared);
+}
+
+/// Listen on loopback: the usual port, or any free one if it's taken (Windows).
+#[cfg(windows)]
+pub fn bind_any() -> Result<(Arc<Server>, u16), String> {
+    let server = Server::http(format!("127.0.0.1:{}", port())).or_else(|_| Server::http("127.0.0.1:0")).map_err(|e| e.to_string())?;
+    let port = server.server_addr().to_ip().map(|a| a.port()).unwrap_or(0);
+    info!("Listening on 127.0.0.1:{port}");
+    Ok((Arc::new(server), port))
+}
+
+pub fn serve_on(server: Arc<Server>, shared: Arc<Shared>) {
     let cache: Arc<AuthCache> = Arc::new(Mutex::new(HashMap::new()));
     // A few workers, so a slow request (a connection test) doesn't hold up the window.
     let mut workers = Vec::new();
@@ -48,6 +70,68 @@ pub fn serve(shared: Arc<Shared>) {
     for w in workers {
         let _ = w.join();
     }
+}
+
+/// The key the Windows window sends with every request (made fresh each start).
+#[cfg(windows)]
+pub fn window_key() -> &'static str {
+    static KEY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    KEY.get_or_init(|| config::random_hex(48))
+}
+
+/// The window's own files, built into the program (Windows).
+#[cfg(windows)]
+fn static_file(path: &str) -> Option<(&'static [u8], &'static str)> {
+    let f: (&'static [u8], &'static str) = match path {
+        "/" | "/index.html" => (include_bytes!("../ui/index.html"), "text/html; charset=utf-8"),
+        "/app.js" => (include_bytes!("../ui/app.js"), "text/javascript; charset=utf-8"),
+        "/elixir.css" => (include_bytes!("../ui/elixir.css"), "text/css; charset=utf-8"),
+        "/fonts/nunito-700.woff2" => (include_bytes!("../ui/fonts/nunito-700.woff2"), "font/woff2"),
+        "/fonts/nunito-800.woff2" => (include_bytes!("../ui/fonts/nunito-800.woff2"), "font/woff2"),
+        "/fonts/orbitron-800.ttf" => (include_bytes!("../ui/fonts/orbitron-800.ttf"), "font/ttf"),
+        "/images/elixir_16.png" => (include_bytes!("../ui/images/elixir_16.png"), "image/png"),
+        "/images/elixir_24.png" => (include_bytes!("../ui/images/elixir_24.png"), "image/png"),
+        "/images/elixir_32.png" => (include_bytes!("../ui/images/elixir_32.png"), "image/png"),
+        "/images/elixir_48.png" => (include_bytes!("../ui/images/elixir_48.png"), "image/png"),
+        "/images/elixir_64.png" => (include_bytes!("../ui/images/elixir_64.png"), "image/png"),
+        "/images/elixir_72.png" => (include_bytes!("../ui/images/elixir_72.png"), "image/png"),
+        "/images/elixir_256.png" => (include_bytes!("../ui/images/elixir_256.png"), "image/png"),
+        _ => return None,
+    };
+    Some(f)
+}
+
+/// Windows: serve a page file, or say whether an API request may go on.
+#[cfg(windows)]
+fn windows_gate(req: Request) -> Option<Request> {
+    // Only pages that came from this server (blocks DNS-rebinding tricks).
+    let host = header(&req, "Host");
+    let host_ok = host.starts_with("127.0.0.1:") || host.starts_with("localhost:");
+    let path = req.url().split('?').next().unwrap_or("/").to_string();
+    if !host_ok {
+        respond(req, 403, json!({ "error": "Not allowed" }));
+        return None;
+    }
+    if path == "/api.cgi" || path == "/api" {
+        if header(&req, "X-Elixir-Key") != window_key() {
+            respond(req, 401, json!({ "error": "Open Elixir from its own window." }));
+            return None;
+        }
+        return Some(req);
+    }
+    match static_file(&path) {
+        Some((bytes, kind)) => {
+            let response = Response::from_data(bytes)
+                .with_header(Header::from_bytes("Content-Type", kind).unwrap())
+                .with_header(Header::from_bytes("Cache-Control", "no-store").unwrap())
+                .with_header(Header::from_bytes("X-Content-Type-Options", "nosniff").unwrap());
+            let _ = req.respond(response);
+        }
+        None => {
+            let _ = req.respond(Response::from_string("Not found").with_status_code(404));
+        }
+    }
+    None
 }
 
 fn header(req: &Request, name: &str) -> String {
@@ -93,6 +177,7 @@ fn percent_decode(s: &str) -> String {
 }
 
 /// Check the DSM session with DSM's own authenticate.cgi; admins only.
+#[cfg(unix)]
 fn authenticate(cookie: &str, token: &str, remote: &str, cache: &AuthCache) -> Result<String, String> {
     if std::env::var("ELIXIR_NO_AUTH").is_ok_and(|v| v == "1") {
         return Ok("dev".into());
@@ -135,6 +220,7 @@ fn authenticate(cookie: &str, token: &str, remote: &str, cache: &AuthCache) -> R
     Ok(user)
 }
 
+#[cfg(unix)]
 fn is_admin(user: &str) -> bool {
     if user == "root" {
         return true;
@@ -157,6 +243,7 @@ fn respond(req: Request, code: u16, body: Value) {
 }
 
 /// Whether `path` is inside /volumeN (no `..` tricks).
+#[cfg(unix)]
 fn inside_volume(path: &Path) -> bool {
     if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
         return false;
@@ -168,18 +255,49 @@ fn inside_volume(path: &Path) -> bool {
         .is_some_and(|first| first.starts_with("volume") && first[6..].chars().all(|c| c.is_ascii_digit()) && first.len() > 6)
 }
 
+/// Windows: a full path on a drive (C:\\…) or a network share (\\\\server\\share\\…).
+#[cfg(windows)]
+fn inside_volume(path: &Path) -> bool {
+    !path.components().any(|c| matches!(c, std::path::Component::ParentDir)) && path.is_absolute()
+}
+
+#[cfg(unix)]
 fn browse_root() -> String {
     std::env::var("ELIXIR_BROWSE_ROOT").unwrap_or_else(|_| "/".into())
 }
 
-fn handle(mut req: Request, shared: &Arc<Shared>, cache: &AuthCache) {
+/// Where-to-pick wording for errors.
+const PICK_HINT: &str = if cfg!(windows) { "Pick a folder on a drive or a network share" } else { "Pick a folder on one of the NAS volumes" };
+
+/// Drop a trailing slash but keep "C:\\" and "/" whole.
+fn trim_folder(path: &str) -> String {
+    let t = path.trim().trim_end_matches(['/', '\\']);
+    if t.is_empty() {
+        return path.trim().chars().take(1).collect();
+    }
+    if cfg!(windows) && t.len() == 2 && t.ends_with(':') {
+        return format!("{t}\\");
+    }
+    t.to_string()
+}
+
+fn handle(req: Request, shared: &Arc<Shared>, cache: &AuthCache) {
+    #[cfg(windows)]
+    let Some(mut req) = windows_gate(req) else { return };
+    #[cfg(windows)]
+    let _ = cache;
+    #[cfg(unix)]
+    let mut req = req;
     let q = query(req.url());
     let route = q.get("r").cloned().unwrap_or_default();
-    let cookie = header(&req, "X-Elixir-Cookie");
-    let token = header(&req, "X-Elixir-Token");
-    let remote = header(&req, "X-Elixir-Remote");
-    if let Err(message) = authenticate(&cookie, &token, &remote, cache) {
-        return respond(req, 401, json!({ "error": message }));
+    #[cfg(unix)]
+    {
+        let cookie = header(&req, "X-Elixir-Cookie");
+        let token = header(&req, "X-Elixir-Token");
+        let remote = header(&req, "X-Elixir-Remote");
+        if let Err(message) = authenticate(&cookie, &token, &remote, cache) {
+            return respond(req, 401, json!({ "error": message }));
+        }
     }
     let mut body = String::new();
     if *req.method() == Method::Post {
@@ -198,7 +316,7 @@ fn handle(mut req: Request, shared: &Arc<Shared>, cache: &AuthCache) {
         (true, "scan") => {
             let path = s("path");
             if !inside_volume(Path::new(&path)) || !Path::new(&path).exists() {
-                Err("Pick a folder or file on one of the NAS volumes".into())
+                Err(format!("{PICK_HINT} (or a video on one)"))
             } else {
                 engine::scan(shared, Path::new(&path), parse_source(&s("source")), Origin::Manual).map(|b| json!({ "batch": b }))
             }
@@ -318,6 +436,26 @@ fn handle(mut req: Request, shared: &Arc<Shared>, cache: &AuthCache) {
             info!("Stopped watching {path}");
             shared.update_config(cfg).map(|_| json!({ "ok": true }))
         }
+        (true, "watched/noseed") => {
+            // "Nothing seeds from this folder": automation may run without Lifestream and move files.
+            let path = s("path");
+            let on = input.get("on").and_then(Value::as_bool).unwrap_or(false);
+            let mut cfg = shared.cfg();
+            if !cfg.watched.contains(&path) {
+                Err("That folder isn't watched".into())
+            } else {
+                cfg.no_seed.retain(|f| *f != path);
+                if on {
+                    cfg.no_seed.push(path.clone());
+                }
+                info!("{path}: nothing seeds from it = {on}");
+                shared.update_config(cfg).map(|_| {
+                    shared.wake();
+                    json!({ "ok": true })
+                })
+            }
+        }
+        (true, "naming/example") => Ok(naming_example(shared, &input)),
         (true, "watched/takeover") => {
             let path = s("path");
             let cfg = shared.cfg();
@@ -427,7 +565,7 @@ fn save_config(shared: &Arc<Shared>, input: Value) -> Result<Value, String> {
             }
             continue;
         }
-        if key == "watched" || key == "owner_id" {
+        if key == "watched" || key == "owner_id" || key == "no_seed" {
             continue;
         }
         if target.contains_key(&key) {
@@ -567,35 +705,39 @@ fn history(shared: &Arc<Shared>) -> Value {
 }
 
 fn add_watched(shared: &Arc<Shared>, path: &str) -> Result<Value, String> {
-    let path = path.trim_end_matches('/').to_string();
+    let path = trim_folder(path);
     let p = Path::new(&path);
     if !inside_volume(p) || !p.is_dir() {
-        return Err("Pick a folder on one of the NAS volumes".into());
+        return Err(PICK_HINT.into());
     }
     let mut cfg = shared.cfg();
-    if cfg.watched.iter().any(|f| *f == path) {
+    if cfg.watched.iter().any(|f| crate::fsops::same_path(Path::new(f), p)) {
         return Err("That folder is already watched".into());
     }
-    if let Some(f) = cfg.watched.iter().find(|f| p.starts_with(f) || Path::new(f).starts_with(p)) {
+    if let Some(f) = cfg.watched.iter().find(|f| crate::fsops::within(p, Path::new(f)) || crate::fsops::within(Path::new(f), p)) {
         return Err(format!("It overlaps {f}, which is already watched"));
     }
     // Midgar's and Turks' library folders are theirs.
     let roots = engine::library_roots(&cfg);
-    if let Some((r, app)) = roots.iter().find(|(r, _)| p.starts_with(r) || Path::new(r).starts_with(p)) {
+    if let Some((r, app)) = roots.iter().find(|(r, _)| crate::fsops::within(p, Path::new(r)) || crate::fsops::within(Path::new(r), p)) {
         return Err(format!("{app} manages {r}, so Elixir won't watch it. Watch your downloads instead; Rename by hand still works there"));
     }
     if !Arr::Midgar.configured(&cfg) || !Arr::Turks.configured(&cfg) {
         // Without Midgar/Turks connected their folders aren't known: refuse the obvious ones.
         let lower = path.to_lowercase();
         for (lib, what) in [(&cfg.tv_folder, "your TV folder"), (&cfg.movies_folder, "your movies folder"), (&cfg.anime_folder, "your anime folder")] {
-            if !lib.is_empty() && (p.starts_with(lib) || Path::new(lib).starts_with(p)) {
+            if !lib.is_empty() && (crate::fsops::within(p, Path::new(lib)) || crate::fsops::within(Path::new(lib), p)) {
                 return Err(format!("That's {what}. Watch your downloads instead"));
             }
         }
         let _ = lower;
     }
     if std::fs::write(p.join(".elixir-write-test"), b"").is_err() {
-        return Err(format!("Elixir can't write in that folder. Give the Elixir user Read/Write on the shared folder {}", path.split('/').nth(2).unwrap_or("")));
+        return Err(if cfg!(windows) {
+            "Elixir can't write in that folder. Check that your Windows account (or the network share) allows changes there".into()
+        } else {
+            format!("Elixir can't write in that folder. Give the Elixir user Read/Write on the shared folder {}", path.split('/').nth(2).unwrap_or(""))
+        });
     }
     let _ = std::fs::remove_file(p.join(".elixir-write-test"));
     let found = engine::snapshot_folder(shared, &path);
@@ -603,6 +745,52 @@ fn add_watched(shared: &Arc<Shared>, path: &str) -> Result<Value, String> {
     info!("Watching {path} ({found} video(s) already there are left alone)");
     shared.update_config(cfg)?;
     Ok(json!({ "ok": true, "existing": found }))
+}
+
+/// Example names for the formats being edited (Settings).
+fn naming_example(shared: &Arc<Shared>, input: &Value) -> Value {
+    use crate::naming::{self, EpisodeNaming, MovieNaming, Values};
+    let midgar_style = input.get("preset").and_then(Value::as_str) == Some("midgar");
+    let cfg = shared.cfg();
+    // "Same as Midgar": the formats read from Midgar (or Midgar's defaults).
+    let e: EpisodeNaming = if midgar_style {
+        if Arr::Midgar.configured(&cfg) {
+            suite::midgar_naming(&cfg).unwrap_or_default()
+        } else {
+            EpisodeNaming::default()
+        }
+    } else {
+        input.get("episode_naming").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default()
+    };
+    let m: MovieNaming = input.get("movie_naming").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
+    let sep = std::path::MAIN_SEPARATOR.to_string();
+    let show = |fmt: &str, season: u32, episodes: Vec<u32>, titles: Vec<&str>, date: Option<&str>| {
+        let v = Values {
+            series_title: "The Office (US)".into(),
+            series_year: Some(2005),
+            season: Some(season),
+            episodes,
+            absolute: vec![],
+            episode_titles: titles.into_iter().map(String::from).collect(),
+            air_date: date.map(String::from),
+            ..Default::default()
+        };
+        let series = naming::clean_component(&naming::fill(&e.series_folder, &v, 5), e.colon);
+        let season_dir = naming::clean_component(&naming::fill(if season == 0 { &e.specials_folder } else { &e.season_folder }, &v, 5), e.colon);
+        let file = naming::clean_component(&naming::fill(fmt, &v, e.multi_style), e.colon);
+        [series, season_dir, format!("{file}.mkv")].join(&sep)
+    };
+    let mv = Values { movie_title: "Dune: Part Two".into(), movie_year: Some(2024), ..Default::default() };
+    let movie = [naming::clean_component(&naming::fill(&m.folder, &mv, 5), m.colon), format!("{}.mkv", naming::clean_component(&naming::fill(&m.file, &mv, 5), m.colon))].join(&sep);
+    json!({
+        "midgar": midgar_style && Arr::Midgar.configured(&cfg),
+        "naming": e,
+        "episode": show(&e.standard, 2, vec![1], vec!["The Dundies"], None),
+        "multi": show(&e.standard, 3, vec![1, 2], vec!["Gay Witch Hunt", "The Convention"], None),
+        "special": show(&e.standard, 0, vec![1], vec!["The Accountants"], None),
+        "daily": show(&e.daily, 2024, vec![], vec!["Guest Night"], Some("2024-03-14")).replace("The Office (US)", "The Daily Show"),
+        "movie": movie,
+    })
 }
 
 /// The checks shown before automation is turned on.
@@ -648,7 +836,11 @@ fn preflight(shared: &Arc<Shared>) -> Value {
 }
 
 fn short(p: &str) -> String {
-    p.trim_start_matches("/volume1").to_string()
+    if cfg!(windows) {
+        p.to_string()
+    } else {
+        p.trim_start_matches("/volume1").to_string()
+    }
 }
 
 /// Can files in `from` get a second name in `to` without copying?
@@ -686,6 +878,7 @@ fn test(shared: &Arc<Shared>, service: &str) -> Result<Value, String> {
 }
 
 /// Folders (and with `files`, videos) for the pickers. NAS volumes only.
+#[cfg(unix)]
 fn browse(path: &str, files: bool) -> Result<Value, String> {
     let root = browse_root();
     let path = path.trim_end_matches('/');
@@ -731,6 +924,43 @@ fn browse(path: &str, files: bool) -> Result<Value, String> {
         (path.to_string(), parent)
     };
     Ok(json!({ "path": current, "parent": parent, "entries": entries }))
+}
+
+
+/// Windows pickers: drives first, then folders. Network shares can be typed in.
+#[cfg(windows)]
+fn browse(path: &str, files: bool) -> Result<Value, String> {
+    let path = if path.trim().is_empty() { String::new() } else { trim_folder(path) };
+    let mut entries: Vec<Value> = Vec::new();
+    if path.is_empty() {
+        for letter in b'A'..=b'Z' {
+            let d = format!("{}:\\", letter as char);
+            if Path::new(&d).exists() {
+                entries.push(json!({ "name": d, "path": d, "dir": true, "readable": std::fs::read_dir(&d).is_ok(), "volume": "Drive" }));
+            }
+        }
+        return Ok(json!({ "path": "", "parent": null, "entries": entries }));
+    }
+    let p = Path::new(&path);
+    if !inside_volume(p) {
+        return Err(PICK_HINT.into());
+    }
+    let rd = std::fs::read_dir(p).map_err(|_| format!("Elixir can't open {path}"))?;
+    let mut all: Vec<_> = rd.flatten().collect();
+    all.sort_by_key(|e| e.file_name().to_string_lossy().to_lowercase());
+    for e in all {
+        let name = e.file_name().to_string_lossy().into_owned();
+        let ep = e.path();
+        let Ok(t) = e.file_type() else { continue };
+        if t.is_dir() && !config::is_system_folder(&name) && !["$recycle.bin", "system volume information"].contains(&name.to_lowercase().as_str()) {
+            let readable = std::fs::read_dir(&ep).is_ok();
+            entries.push(json!({ "name": name, "path": ep.to_string_lossy(), "dir": true, "readable": readable }));
+        } else if files && t.is_file() && config::is_video(&ep) {
+            entries.push(json!({ "name": name, "path": ep.to_string_lossy(), "dir": false, "size": e.metadata().map(|m| m.len()).unwrap_or(0) }));
+        }
+    }
+    let parent = p.parent().map(|pp| pp.to_string_lossy().into_owned()).filter(|pp| !pp.is_empty() && pp != &path).unwrap_or_default();
+    Ok(json!({ "path": path, "parent": parent, "entries": entries }))
 }
 
 #[cfg(test)]

@@ -251,6 +251,11 @@ pub fn recover_journal() {
                             OpState::Failed
                         }
                     }
+                    // Windows moves in one step, so there's no half-done state; a name
+                    // that only changed letter case is one file and must never be deleted.
+                    OpKind::Move if cfg!(windows) => {
+                        if dst.exists() { OpState::Done } else { OpState::Failed }
+                    }
                     OpKind::Move => {
                         if dst.exists() && src.exists() && fsops::ident(src) == fsops::ident(dst) {
                             // Linked but the old name wasn't dropped yet: finish it.
@@ -584,10 +589,17 @@ impl Context {
         }
         let midgar = Arr::Midgar.configured(cfg).then(|| suite::arr_library(cfg, Arr::Midgar).ok()).flatten();
         let turks = Arr::Turks.configured(cfg).then(|| suite::arr_library(cfg, Arr::Turks).ok()).flatten();
-        if Arr::Midgar.configured(cfg) {
-            if let Ok(n) = suite::midgar_naming(cfg) {
-                *shared.naming.lock().unwrap_or_else(|e| e.into_inner()) = n;
+        // Show naming: Midgar's own (when it's the choice and connected), else the chosen formats.
+        if cfg.naming_preset == "midgar" {
+            if Arr::Midgar.configured(cfg) {
+                if let Ok(n) = suite::midgar_naming(cfg) {
+                    *shared.naming.lock().unwrap_or_else(|e| e.into_inner()) = n;
+                }
+            } else {
+                *shared.naming.lock().unwrap_or_else(|e| e.into_inner()) = EpisodeNaming::default();
             }
+        } else {
+            *shared.naming.lock().unwrap_or_else(|e| e.into_inner()) = cfg.episode_naming.clone();
         }
         let first_root = |arr: Arr| if arr.configured(cfg) { suite::arr_roots(cfg, arr).ok().and_then(|r| r.into_iter().next()).unwrap_or_default() } else { String::new() };
         let tv_root = if cfg.tv_folder.is_empty() { first_root(Arr::Midgar) } else { cfg.tv_folder.clone() };
@@ -597,7 +609,7 @@ impl Context {
     }
 
     fn torrent_of(&self, path: &Path) -> Option<&Torrent> {
-        self.torrents.as_ref()?.iter().find(|t| t.files.iter().any(|f| f.path == path))
+        self.torrents.as_ref()?.iter().find(|t| t.files.iter().any(|f| fsops::same_path(&f.path, path)))
     }
 }
 
@@ -632,6 +644,7 @@ fn movie_cand(m: &Movie) -> Cand {
 
 /// Match one item: candidates, checks, target name, and who it belongs to.
 pub fn evaluate(shared: &Shared, cfg: &Config, ctx: &Context, item: &mut Item) {
+    item.plan = None;
     item.checks.clear();
     item.message.clear();
     item.target.clear();
@@ -957,6 +970,14 @@ fn plan_target(shared: &Shared, cfg: &Config, ctx: &Context, item: &mut Item) {
             item.state = State::Matching;
             return;
         };
+        if eps.is_empty() {
+            // The show matched but not the episode: no name to offer.
+            item.target.clear();
+            item.sidecars.clear();
+            item.state = State::Pick;
+            item.message = format!("{} has no such episode in the database. Pick the right match, or the database may not list it yet", show.title);
+            return;
+        }
         let p = &item.parsed;
         let v = Values {
             series_title: show.title.clone(),
@@ -1007,7 +1028,7 @@ fn plan_target(shared: &Shared, cfg: &Config, ctx: &Context, item: &mut Item) {
     let target = dir.join(format!("{stem}{ext}"));
     item.target = target.to_string_lossy().into_owned();
     item.sidecars = sidecars_of(&path, &dir, &stem);
-    if Path::new(&item.target) == path {
+    if fsops::same_path(Path::new(&item.target), &path) && Path::new(&item.target).file_name() == path.file_name() {
         item.state = State::Done;
         item.message = "Already named like this".into();
         return;
@@ -1076,8 +1097,11 @@ fn do_op(run: &mut Run, ri: usize, oi: usize) -> Result<(), String> {
     let (src, dst) = (Path::new(&o.src), Path::new(&o.dst));
     let r: Result<(), String> = match o.kind {
         OpKind::Mkdir => std::fs::create_dir(dst).or_else(|e| if e.kind() == std::io::ErrorKind::AlreadyExists { Ok(()) } else { Err(fsops::plain(&e)) }).map(|_| {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(dst, std::fs::Permissions::from_mode(0o775));
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(dst, std::fs::Permissions::from_mode(0o775));
+            }
         }),
         OpKind::Link | OpKind::Clone => fsops::link_or_clone(src, dst).map(|made| {
             run.items[ri].ops[oi].kind = if made == Made::Clone { OpKind::Clone } else { OpKind::Link };
@@ -1102,9 +1126,12 @@ pub fn apply(shared: &Arc<Shared>, ids: &[u64], automatic: bool) -> Result<u64, 
     let cfg = shared.cfg();
     let items: Vec<Item> = {
         let all = shared.items.lock().unwrap_or_else(|e| e.into_inner());
-        ids.iter().filter_map(|id| all.iter().find(|i| i.id == *id).cloned()).filter(|i| matches!(i.state, State::Ready | State::Midgar | State::Practice))
+        ids.iter()
+            .filter_map(|id| all.iter().find(|i| i.id == *id).cloned())
+            // A Queue item that only waited for a yes (new show, or automation was off) can go by hand.
+            .filter(|i| matches!(i.state, State::Ready | State::Midgar | State::Practice) || (!automatic && i.state == State::Pick && i.plan.is_some()))
             .map(|mut i| {
-                if i.state == State::Practice {
+                if matches!(i.state, State::Practice | State::Pick) {
                     i.state = i.plan.unwrap_or(State::Ready);
                 }
                 i
@@ -1143,13 +1170,13 @@ pub fn apply(shared: &Arc<Shared>, ids: &[u64], automatic: bool) -> Result<u64, 
             fail(&mut run, ri, "The file changed since it was matched. Scan it again".into());
             continue;
         }
-        let torrent = torrents.as_ref().and_then(|ts| ts.iter().find(|t| t.files.iter().any(|f| f.path == path)));
+        let torrent = torrents.as_ref().and_then(|ts| ts.iter().find(|t| t.files.iter().any(|f| fsops::same_path(&f.path, &path))));
         if let Some(t) = torrent {
             if owned.contains(&t.hash) {
                 fail(&mut run, ri, "Midgar or Turks downloaded this, so they handle it".into());
                 continue;
             }
-            let f = t.files.iter().find(|f| f.path == path);
+            let f = t.files.iter().find(|f| fsops::same_path(&f.path, &path));
             if !t.finished() || f.is_some_and(|f| f.done < f.length) {
                 fail(&mut run, ri, "Lifestream hasn't finished this download yet".into());
                 continue;
@@ -1158,8 +1185,12 @@ pub fn apply(shared: &Arc<Shared>, ids: &[u64], automatic: bool) -> Result<u64, 
         // Never move a file that is, or might be, seeding: one Lifestream lists, any
         // file in a folder Lifestream downloads into, or anything at all when
         // Lifestream can't be asked.
-        let in_download_dir = torrents.as_ref().is_some_and(|ts| ts.iter().any(|t| !t.dir.is_empty() && path.starts_with(&t.dir)));
-        let keep_original = torrent.is_some() || torrents.is_none() || in_download_dir;
+        let in_download_dir = torrents.as_ref().is_some_and(|ts| ts.iter().any(|t| !t.dir.is_empty() && fsops::within(&path, Path::new(&t.dir))));
+        // Lifestream set up but not answering: play safe, every file might be seeding.
+        // Not set up at all: nothing here seeds through Lifestream, so files move
+        // (and automation only runs in folders marked "Nothing seeds from this folder").
+        let lifestream_down = suite::lifestream_configured(&cfg) && torrents.is_none();
+        let keep_original = torrent.is_some() || in_download_dir || (lifestream_down && !cfg.no_seed_for(&path));
         if item.state == State::Midgar {
             ri.handoff = true;
             ri.app = "midgar".into();
@@ -1187,8 +1218,14 @@ pub fn apply(shared: &Arc<Shared>, ids: &[u64], automatic: bool) -> Result<u64, 
             continue;
         }
         let target = PathBuf::from(&item.target);
-        if target.exists() {
+        // On Windows a name that only differs in letter case is the same file.
+        let case_only = cfg!(windows) && fsops::same_path(&target, &path) && fsops::ident(&target) == fsops::ident(&path);
+        if target.exists() && !case_only {
             fail(&mut run, ri, format!("{} already exists. Elixir never replaces files", fsops::show(&target)));
+            continue;
+        }
+        if case_only && keep_original {
+            fail(&mut run, ri, "Only the letter case differs, and a seeding file can't get a second name like that. Rename it after it stops seeding".into());
             continue;
         }
         let dir = target.parent().unwrap_or(Path::new("/")).to_path_buf();
@@ -1308,7 +1345,7 @@ pub fn undo(run_id: u64) -> Result<String, String> {
                 problem = Some(format!("{} isn't there any more", fsops::show(dst)));
             } else if o.after.is_some() && fsops::ident(dst) != o.after {
                 problem = Some(format!("{} was replaced since", fsops::show(dst)));
-            } else if o.kind == OpKind::Move && Path::new(&o.src).exists() {
+            } else if o.kind == OpKind::Move && Path::new(&o.src).exists() && !(cfg!(windows) && fsops::same_path(Path::new(&o.src), dst)) {
                 problem = Some(format!("{} exists again", fsops::show(Path::new(&o.src))));
             }
         }
@@ -1417,13 +1454,17 @@ fn owner_check(folder: &Path, my_id: &str, last_seen: &mut HashMap<String, (u64,
         }
         counter = c;
     }
-    let mine = json!({"id": my_id, "label": "NAS", "counter": counter + 1, "app": "Elixir"});
-    config::write_atomic(&file, mine.to_string().as_bytes()).map_err(|e| format!("Can't write in this folder: {}", fsops::plain(&e)))
+    let mine = json!({"id": my_id, "label": config::machine_label(), "counter": counter + 1, "app": "Elixir"});
+    let r = config::write_atomic(&file, mine.to_string().as_bytes()).map_err(|e| format!("Can't write in this folder: {}", fsops::plain(&e)));
+    fsops::hide(&file);
+    r
 }
 
 pub fn take_over(folder: &Path, my_id: &str) -> Result<(), String> {
-    let mine = json!({"id": my_id, "label": "NAS", "counter": 1, "app": "Elixir"});
-    config::write_atomic(&folder.join(OWNER_FILE), mine.to_string().as_bytes()).map_err(|e| fsops::plain(&e))
+    let mine = json!({"id": my_id, "label": config::machine_label(), "counter": 1, "app": "Elixir"});
+    let r = config::write_atomic(&folder.join(OWNER_FILE), mine.to_string().as_bytes()).map_err(|e| fsops::plain(&e));
+    fsops::hide(&folder.join(OWNER_FILE));
+    r
 }
 
 /// Folders Midgar and Turks manage, which can't be watched.
@@ -1511,17 +1552,22 @@ fn auto_pass(shared: &Arc<Shared>, owners: &mut HashMap<String, (u64, Instant)>)
         set_auto(shared, "idle", "Add a folder to watch", vec![]);
         return;
     }
-    // Ask first, or do nothing.
-    if !suite::lifestream_configured(&cfg) {
-        set_auto(shared, "paused", "Connect Lifestream in Settings first, so Elixir knows which files are seeding", infos("paused", ""));
+    // Without Lifestream only folders marked "Nothing seeds from this folder" can run.
+    let lifestream = suite::lifestream_configured(&cfg);
+    if !lifestream && !cfg.watched.iter().any(|f| cfg.no_seed_for(Path::new(f))) {
+        set_auto(shared, "paused", "Connect Lifestream in Settings, or mark a watched folder \"Nothing seeds from this folder\"", infos("paused", ""));
         return;
     }
-    let torrents = match suite::lifestream_torrents(&cfg) {
-        Ok(t) => t,
-        Err(e) => {
-            set_auto(shared, "paused", &format!("Paused: {e}"), infos("paused", ""));
-            return;
+    let torrents = if lifestream {
+        match suite::lifestream_torrents(&cfg) {
+            Ok(t) => t,
+            Err(e) => {
+                set_auto(shared, "paused", &format!("Paused: {e}"), infos("paused", ""));
+                return;
+            }
         }
+    } else {
+        Vec::new()
     };
     for arr in [Arr::Midgar, Arr::Turks] {
         if arr.configured(&cfg) {
@@ -1538,9 +1584,15 @@ fn auto_pass(shared: &Arc<Shared>, owners: &mut HashMap<String, (u64, Instant)>)
     for folder in &cfg.watched {
         let fp = Path::new(folder);
         let mut fi = FolderInfo { path: folder.clone(), state: "watching".into(), ..Default::default() };
-        if let Some((r, app)) = roots.iter().find(|(r, _)| fp.starts_with(r) || Path::new(r).starts_with(fp)) {
+        if let Some((r, app)) = roots.iter().find(|(r, _)| fsops::within(fp, Path::new(r)) || fsops::within(Path::new(r), fp)) {
             fi.state = "refused".into();
             fi.message = format!("{app} manages {r}. Watch your downloads instead");
+            fis.push(fi);
+            continue;
+        }
+        if !lifestream && !cfg.no_seed_for(fp) {
+            fi.state = "paused".into();
+            fi.message = "Needs Lifestream to know what's seeding (or mark it \"Nothing seeds from this folder\")".into();
             fis.push(fi);
             continue;
         }
@@ -1590,10 +1642,10 @@ fn auto_pass(shared: &Arc<Shared>, owners: &mut HashMap<String, (u64, Instant)>)
                 e.stable_polls = 0;
             }
             // Finished?
-            let torrent = torrents.iter().find(|t| t.files.iter().any(|tf| tf.path == *f));
+            let torrent = torrents.iter().find(|t| t.files.iter().any(|tf| fsops::same_path(&tf.path, f)));
             let ready = match torrent {
                 Some(t) => {
-                    let tf = t.files.iter().find(|tf| tf.path == *f);
+                    let tf = t.files.iter().find(|tf| fsops::same_path(&tf.path, f));
                     let complete = t.finished() && tf.is_some_and(|tf| tf.done >= tf.length && tf.length > 0) && matches!(t.status, 0 | 5 | 6);
                     // Settled: same folder over two passes, and quiet for 2 minutes.
                     if e.torrent_dir == t.dir && complete {
@@ -1646,6 +1698,7 @@ fn after_auto_match(shared: &Arc<Shared>, id: u64) {
         State::Ready | State::Midgar => {
             if !cfg.automatic {
                 shared.with_item(id, |i| {
+                    i.plan = Some(i.state);
                     i.state = State::Pick;
                     i.message = "Automatic renaming was turned off. Rename it here if you like".into();
                 });
@@ -1657,6 +1710,7 @@ fn after_auto_match(shared: &Arc<Shared>, id: u64) {
                 });
             } else if first_time {
                 shared.with_item(id, |i| {
+                    i.plan = Some(i.state);
                     i.state = State::Pick;
                     i.message = "A show or movie Elixir hasn't seen before: confirm it once".into();
                 });
@@ -1711,9 +1765,12 @@ mod tests {
         let s = sidecars_of(&v, Path::new("/new"), "Show - S01E01 - Pilot");
         let mut dsts: Vec<&str> = s.iter().map(|(_, d)| d.as_str()).collect();
         dsts.sort();
-        assert_eq!(dsts, vec!["/new/Show - S01E01 - Pilot.2_English.srt", "/new/Show - S01E01 - Pilot.en.srt", "/new/Show - S01E01 - Pilot.nfo"]);
+        let want: Vec<String> = ["Show - S01E01 - Pilot.2_English.srt", "Show - S01E01 - Pilot.en.srt", "Show - S01E01 - Pilot.nfo"].iter().map(|n| Path::new("/new").join(n).to_string_lossy().into_owned()).collect();
+        assert_eq!(dsts, want);
     }
 
+    // Linux moves are link + unlink, so a crash can leave both names; Windows moves in one step.
+    #[cfg(unix)]
     #[test]
     fn journal_recovery_finishes_half_moves() {
         let d = tempfile::tempdir().unwrap();

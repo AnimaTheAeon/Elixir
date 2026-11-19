@@ -1,12 +1,20 @@
-//! Elixir for Synology DSM.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
+//! Elixir: renames TV shows, movies and anime.
 //!
+//! Synology DSM:
 //! `elixir daemon`  background service (started by DSM)
 //! `elixir cgi`     the DSM web bridge (run by DSM as api.cgi)
 //! `elixir update`  install the latest release (root, Task Scheduler)
+//!
+//! Windows: `elixir.exe` opens the window (`--tray` starts hidden in the tray).
 
 mod api;
+#[cfg(unix)]
 mod cgi;
 mod config;
+#[cfg(windows)]
+mod desktop;
 mod engine;
 mod fsops;
 mod http;
@@ -17,6 +25,7 @@ mod parse;
 mod suite;
 mod update;
 
+#[cfg(unix)]
 fn main() {
     let mode = std::env::args().nth(1).unwrap_or_else(|| "daemon".into());
     match mode.as_str() {
@@ -30,6 +39,16 @@ fn main() {
     }
 }
 
+#[cfg(windows)]
+fn main() {
+    if std::env::args().nth(1).as_deref() == Some("--version") {
+        println!("{}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
+    desktop::run();
+}
+
+#[cfg(unix)]
 fn daemon() {
     // Files and folders Elixir makes stay writable for Midgar and Turks (group).
     // SAFETY: umask has no preconditions.

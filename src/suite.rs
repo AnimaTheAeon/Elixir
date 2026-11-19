@@ -30,6 +30,15 @@ pub struct TorrentFile {
     pub done: u64,
 }
 
+/// Torrent file names use "/"; Windows paths use "\\".
+fn native(name: &str) -> String {
+    if cfg!(windows) {
+        name.replace('/', "\\")
+    } else {
+        name.to_string()
+    }
+}
+
 impl Torrent {
     /// Has its file list, and everything wanted is here.
     pub fn finished(&self) -> bool {
@@ -94,7 +103,7 @@ pub fn lifestream_torrents(cfg: &Config) -> Result<Vec<Torrent>, String> {
                     .into_iter()
                     .flatten()
                     .map(|f| TorrentFile {
-                        path: Path::new(&dir).join(f["name"].as_str().unwrap_or("")),
+                        path: Path::new(&dir).join(native(f["name"].as_str().unwrap_or(""))),
                         length: f["length"].as_u64().unwrap_or(0),
                         done: f["bytesCompleted"].as_u64().unwrap_or(0),
                     })

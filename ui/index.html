@@ -175,10 +175,10 @@
           <span class="label">HOW IT DECIDES</span>
           <ol class="rules">
             <li><b>Finished files only.</b> Torrents when Lifestream says they're done and in their final folder; other files once they've stopped growing for 5 minutes.</li>
-            <li><b>Can't ask? Do nothing.</b> If Lifestream, Midgar or Turks don't answer, automation pauses.</li>
+            <li><b>Can't ask? Do nothing.</b> If Lifestream, Midgar or Turks don't answer, automation pauses. Without Lifestream it only runs in folders marked "Nothing seeds from this folder".</li>
             <li><b>The owner does the work.</b> Anything Midgar or Turks downloaded is theirs. A show Midgar tracks is handed to Midgar to import. Elixir names only what neither tracks.</li>
             <li><b>Sure, or it asks.</b> A show or movie Elixir hasn't seen before waits here once. After that all four checks must pass: exact title, matching year, the episode exists, only one candidate.</li>
-            <li><b>Nothing lost.</b> Seeding files get a second name (hardlink or instant clone), never moved. Nothing is overwritten or deleted.</li>
+            <li><b>Nothing lost.</b> Seeding files get a second name (hardlink or instant clone), never moved. Other files move within the same drive. Nothing is overwritten, copied or deleted.</li>
             <li><b>Undo for 30 days.</b> Every step is written down first, so a restart can finish or roll back.</li>
           </ol>
         </div>
@@ -200,7 +200,7 @@
     <!-- Settings -->
     <div class="page" data-page="config">
       <div class="page-head"><h1>Settings</h1><span class="saved">Saved</span><span class="grow"></span><button id="view-log">View Log</button></div>
-      <p class="sub">Changes take effect right away. Keys and passwords are kept on the NAS and never shown again.</p>
+      <p class="sub">Changes take effect right away. Keys and passwords are kept <span class="nas-only">on the NAS</span><span class="win-only">on this PC</span> and never shown again.</p>
       <div class="divider"></div>
       <div class="scroll">
         <div class="section">
@@ -263,11 +263,27 @@
           <div class="row"><span class="fl2">Movies</span><input type="text" data-key="movies_folder" class="wide" placeholder="from Turks"><button class="small" data-browse="movies_folder">Browse</button></div>
           <div class="row small dim">A movies folder with genre folders inside (Action Adventure, Comedy, …) gets each movie as one file in its genre, like Turks does.</div>
         </div>
-        <div class="section">
+        <div class="section" id="names">
           <span class="label">NAMES</span>
-          <div class="row small dim">Shows use Midgar's naming (read from Midgar). Movies:</div>
-          <div class="row"><span class="fl2">Movie file</span><input type="text" data-key="movie_naming.file" class="wide"></div>
-          <div class="row"><span class="fl2">Movie folder</span><input type="text" data-key="movie_naming.folder" class="wide"></div>
+          <div class="row"><span class="fl2">Style</span><select id="naming-preset">
+            <option value="midgar">Same as Midgar</option><option value="plex">Plex</option><option value="jellyfin">Jellyfin / Emby</option><option value="kodi">Kodi</option><option value="custom">My own</option>
+          </select><span class="dim small" id="naming-note"></span></div>
+          <div class="row"><span class="fl2">Episode</span><input type="text" data-key="episode_naming.standard" data-naming="ep" class="wide"></div>
+          <div class="row"><span class="fl2">Daily show</span><input type="text" data-key="episode_naming.daily" data-naming="ep" class="wide"></div>
+          <div class="row"><span class="fl2">Anime</span><input type="text" data-key="episode_naming.anime" data-naming="ep" class="wide"></div>
+          <div class="row"><span class="fl2">Show folder</span><input type="text" data-key="episode_naming.series_folder" data-naming="ep" class="wide"></div>
+          <div class="row"><span class="fl2">Season folder</span><input type="text" data-key="episode_naming.season_folder" data-naming="ep" class="wide"></div>
+          <div class="row"><span class="fl2">Specials folder</span><input type="text" data-key="episode_naming.specials_folder" data-naming="ep" class="wide"></div>
+          <div class="row"><span class="fl2">Movie file</span><input type="text" data-key="movie_naming.file" data-naming="movie" class="wide"></div>
+          <div class="row"><span class="fl2">Movie folder</span><input type="text" data-key="movie_naming.folder" data-naming="movie" class="wide"></div>
+          <div class="examples" id="naming-examples"></div>
+          <details class="small"><summary>Words you can use</summary>
+            <div class="dim" style="margin:6px 0;line-height:1.7">
+              <code>{Series Title}</code> <code>{Series TitleYear}</code> <code>{season:00}</code> <code>{episode:00}</code> <code>{Episode Title}</code> <code>{Air-Date}</code> <code>{absolute:000}</code><br>
+              <code>{Movie Title}</code> <code>{Movie TitleYear}</code> <code>{Release Year}</code><br>
+              Write <code>{Series.Title}</code> or <code>{Series_Title}</code> for dots or underscores between words. Shows Midgar tracks are always named by Midgar.
+            </div>
+          </details>
         </div>
         <div class="section">
           <span class="label">UPDATES</span>
@@ -324,6 +340,7 @@
   <div class="win">
     <div class="page-head"><h1 style="font-size:22px" id="picker-title">Choose a folder</h1></div>
     <div id="picker-crumb" class="crumb"></div>
+    <div class="picker-typed win-only"><input type="text" id="picker-path" placeholder="Or type a folder, like \\NAS\data or D:\Downloads" spellcheck="false"><button id="picker-go" class="small">Go</button></div>
     <div class="divider"></div>
     <div id="picker-list" class="picker-list"></div>
     <div id="picker-note" class="notice" style="display:none"></div>

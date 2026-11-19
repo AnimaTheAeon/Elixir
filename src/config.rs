@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use crate::naming::MovieNaming;
+use crate::naming::{EpisodeNaming, MovieNaming};
 
 pub const VIDEO_EXTENSIONS: &[&str] = &[
     "mkv", "mp4", "avi", "m4v", "mov", "wmv", "mpg", "mpeg", "ts", "m2ts", "mts", "webm", "flv", "vob", "ogm", "divx", "xvid", "3gp", "asf", "rmvb",
@@ -58,6 +58,13 @@ pub struct Config {
     pub anime_folder: String,
     pub movies_folder: String,
     pub movie_naming: MovieNaming,
+    /// Show naming: "midgar" (Midgar's own when connected, else Midgar-style), or a preset
+    /// name ("plex", "jellyfin", "kodi", "custom") using `episode_naming`.
+    pub naming_preset: String,
+    pub episode_naming: EpisodeNaming,
+    /// Watched folders nothing seeds from: automation works there without Lifestream,
+    /// and moves files instead of adding a second name.
+    pub no_seed: Vec<String>,
 
     /// Settings page: show the Advanced section.
     pub advanced: bool,
@@ -90,6 +97,9 @@ impl Default for Config {
             anime_folder: String::new(),
             movies_folder: String::new(),
             movie_naming: MovieNaming::default(),
+            naming_preset: "midgar".into(),
+            episode_naming: EpisodeNaming::default(),
+            no_seed: Vec::new(),
             advanced: false,
             owner_id: String::new(),
         }
@@ -101,13 +111,25 @@ impl Config {
         if !["green", "blades", "glass"].contains(&self.theme.as_str()) {
             self.theme = "ff".into();
         }
+        for f in self.watched.iter_mut().chain(self.no_seed.iter_mut()).chain([&mut self.tv_folder, &mut self.anime_folder, &mut self.movies_folder]) {
+            *f = trim_dir(f);
+        }
         let mut seen = std::collections::HashSet::new();
-        self.watched.retain(|f| f.starts_with('/') && seen.insert(f.trim_end_matches('/').to_string()));
-        for f in self.watched.iter_mut().chain([&mut self.tv_folder, &mut self.anime_folder, &mut self.movies_folder]) {
-            while f.len() > 1 && f.ends_with('/') {
-                f.pop();
+        self.watched.retain(|f| Path::new(f).is_absolute() && seen.insert(crate::fsops::norm(Path::new(f))));
+        let watched = self.watched.clone();
+        self.no_seed.retain(|f| watched.iter().any(|w| crate::fsops::same_path(Path::new(w), Path::new(f))));
+        if !["midgar", "plex", "jellyfin", "kodi", "custom"].contains(&self.naming_preset.as_str()) {
+            self.naming_preset = "midgar".into();
+        }
+        let d = EpisodeNaming::default();
+        let e = &mut self.episode_naming;
+        for (field, default) in [(&mut e.standard, d.standard), (&mut e.daily, d.daily), (&mut e.anime, d.anime), (&mut e.series_folder, d.series_folder), (&mut e.season_folder, d.season_folder), (&mut e.specials_folder, d.specials_folder)] {
+            if field.trim().is_empty() {
+                *field = default;
             }
         }
+        e.multi_style = e.multi_style.min(5);
+        e.colon = e.colon.min(4);
         for url in [&mut self.lifestream_url, &mut self.midgar_url, &mut self.turks_url] {
             *url = url.trim().trim_end_matches('/').to_string();
             if !url.is_empty() && !url.starts_with("http://") && !url.starts_with("https://") {
@@ -143,18 +165,78 @@ impl Config {
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         let json = serde_json::to_vec_pretty(self).map_err(std::io::Error::other)?;
         write_atomic(path, &json)?;
-        use std::os::unix::fs::PermissionsExt;
-        // It holds keys and passwords.
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            // It holds keys and passwords.
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        // On Windows it lives in the user's own AppData, which only they can read.
+        Ok(())
     }
 }
 
+impl Config {
+    /// Whether `path` is in a watched folder marked "Nothing seeds from this folder".
+    pub fn no_seed_for(&self, path: &Path) -> bool {
+        self.no_seed.iter().any(|f| crate::fsops::within(path, Path::new(f)))
+    }
+}
+
+/// Drop trailing separators, keeping "/" and "C:\\" whole.
+pub fn trim_dir(f: &str) -> String {
+    let t = f.trim();
+    let cut = t.trim_end_matches(['/', '\\']);
+    if cut.is_empty() {
+        return t.chars().take(1).collect();
+    }
+    if cfg!(windows) && cut.len() == 2 && cut.ends_with(':') {
+        return format!("{cut}\\");
+    }
+    cut.to_string()
+}
+
 pub fn random_id() -> String {
-    let bytes = std::fs::read("/proc/sys/kernel/random/uuid").ok().map(|b| String::from_utf8_lossy(&b).trim().replace('-', ""));
-    bytes.filter(|s| s.len() >= 16).map(|s| s[..16].to_string()).unwrap_or_else(|| {
-        let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
-        format!("{:016x}", t ^ (std::process::id() as u128) << 32)
-    })
+    random_hex(16)
+}
+
+/// Random hex from the system's random source (hashed with the time as a fallback).
+pub fn random_hex(len: usize) -> String {
+    use sha2::{Digest, Sha256};
+    let mut seed = Vec::new();
+    #[cfg(unix)]
+    if let Ok(b) = std::fs::read("/proc/sys/kernel/random/uuid") {
+        seed.extend(b);
+    }
+    // RandomState is seeded from the OS's random source on every platform.
+    use std::hash::{BuildHasher, Hasher};
+    for _ in 0..4 {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(0);
+        seed.extend(h.finish().to_le_bytes());
+    }
+    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    seed.extend(t.to_le_bytes());
+    seed.extend(std::process::id().to_le_bytes());
+    let mut out = String::new();
+    let mut block = Sha256::digest(&seed).to_vec();
+    while out.len() < len {
+        for b in &block {
+            out.push_str(&format!("{b:02x}"));
+        }
+        block = Sha256::digest(&block).to_vec();
+    }
+    out.truncate(len);
+    out
+}
+
+/// How this copy names itself in a watched folder's owner file.
+pub fn machine_label() -> String {
+    if cfg!(windows) {
+        std::env::var("COMPUTERNAME").map(|n| format!("PC {n}")).unwrap_or_else(|_| "a Windows PC".into())
+    } else {
+        "NAS".into()
+    }
 }
 
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
@@ -186,12 +268,16 @@ pub fn is_partial(name: &str) -> bool {
     [".part", ".!qb", ".!ut", ".tmp", ".crdownload", ".partial", ".lftp-pget-status"].iter().any(|s| l.ends_with(s)) || l.starts_with('~') || l.starts_with(".")
 }
 
-/// Package data folder (/var/packages/Elixir/var on DSM).
+/// Data folder: /var/packages/Elixir/var on DSM, %APPDATA%\\Elixir on Windows.
 pub fn var_dir() -> PathBuf {
-    std::env::var_os("SYNOPKG_PKGVAR")
-        .or_else(|| std::env::var_os("ELIXIR_VAR"))
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/var/packages/Elixir/var"))
+    if let Some(v) = std::env::var_os("SYNOPKG_PKGVAR").or_else(|| std::env::var_os("ELIXIR_VAR")) {
+        return PathBuf::from(v);
+    }
+    if cfg!(windows) {
+        std::env::var_os("APPDATA").map(|a| PathBuf::from(a).join("Elixir")).unwrap_or_else(|| PathBuf::from("Elixir-data"))
+    } else {
+        PathBuf::from("/var/packages/Elixir/var")
+    }
 }
 
 #[cfg(test)]
@@ -201,14 +287,14 @@ mod tests {
     #[test]
     fn normalize_cleans_input() {
         let mut c = Config {
-            watched: vec!["/volume1/data/torrents/".into(), "/volume1/data/torrents".into(), "relative".into()],
+            watched: if cfg!(windows) { vec!["D:\\data\\torrents\\".into(), "d:\\Data\\torrents".into(), "relative".into()] } else { vec!["/volume1/data/torrents/".into(), "/volume1/data/torrents".into(), "relative".into()] },
             midgar_url: "192.168.1.127:8990/".into(),
             theme: "nope".into(),
             language: "EN-us".into(),
             ..Config::default()
         };
         c.normalize();
-        assert_eq!(c.watched, vec!["/volume1/data/torrents"]);
+        assert_eq!(c.watched, vec![if cfg!(windows) { "D:\\data\\torrents" } else { "/volume1/data/torrents" }]);
         assert_eq!(c.midgar_url, "http://192.168.1.127:8990");
         assert_eq!(c.theme, "ff");
         assert_eq!(c.language, "en");
