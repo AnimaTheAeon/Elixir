@@ -111,7 +111,10 @@ function buildMenu() {
       go(b.dataset.go);
     }
   });
-  go(location.hash.slice(1) || "rename");
+  // Always open on the main page; a page name left in the address (an old
+  // bookmark or a reload) is dropped rather than reopened.
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+  go("rename");
 }
 
 // ---------- Blades look ----------
@@ -596,7 +599,6 @@ function go(id) {
   $$(".menu-item").forEach((b) => b.classList.toggle("selected", b.dataset.go === menuId));
   glassPill();
   $$(".page").forEach((p) => p.classList.toggle("active", p.dataset.page === id));
-  history.replaceState(null, "", "#" + id);
   const title = $("#g-title");
   if (title) title.textContent = (PAGES.find(([p]) => p === id) || [id, id === "log" ? "Log" : id])[1].toUpperCase();
   if ($("#g-tabs")) renderPageBar();
